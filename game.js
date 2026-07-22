@@ -23,6 +23,16 @@ function lenX(n) { return n * SCALE_X; }
 function lenY(n) { return n * SCALE_Y; }
 const toLen = lenY;
 
+// Touch devices get an entirely separate menu flow and on-screen control
+// scheme (see the 'mobile*' screens and drawMobileControls()) instead of the
+// desktop keyboard/mouse UI - desktop behavior is untouched either way. The
+// ?mobile=1 / ?mobile=0 URL override exists purely for testing without real
+// touch hardware; real players always hit the touch-capability check.
+const MOBILE_OVERRIDE = new URLSearchParams(location.search).get('mobile');
+const IS_MOBILE = MOBILE_OVERRIDE !== null
+  ? MOBILE_OVERRIDE === '1'
+  : ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+
 const ICONS = 'assets/icons/';
 const PORTRAITS = 'assets/portraits/';
 
@@ -199,7 +209,11 @@ function drawMenuParticles() {
 // background) bring it to life without needing CSS animation.
 function drawCharacterShowcase() {
   const n = CHARACTERS.length;
-  const bandCx = CANVAS_W / 2, bandCy = toY(200);
+  // Desktop's Solo/2 Player buttons (y:70-150 and y:250-330) leave a clear
+  // gap around y=200 for the showcase. Mobile's single Play button (y:150-
+  // 240, see PLAY_BUTTON) sits right on top of that same spot, so mobile
+  // needs the showcase moved down below the button instead.
+  const bandCx = CANVAS_W / 2, bandCy = IS_MOBILE ? toY(300) : toY(200);
   const spacing = Math.min(lenX(38), (CANVAS_W - toX(40)) / n);
   const t = (Date.now() - MENU_LOAD_TIME) / 1000;
   CHARACTERS.forEach((c, i) => {
@@ -284,7 +298,7 @@ const ctx = canvas.getContext('2d');
 
 /* ============================== GAME STATE ============================== */
 const app = {
-  screen: 'mode', // mode | characterSolo | characterVersus | play
+  screen: 'mode', // mode | characterSolo | characterVersus | mobileCharacterSelect | mobileDifficultySelect | play
   mode: null, // 'solo' | 'versus'
   modeSelectIndex: 0, // 0 = Solo, 1 = 2 Player
   difficultyIndex: 1,
@@ -293,6 +307,11 @@ const app = {
   cpuBatterIndex: 0,
   player1Locked: false,
   player2Locked: false,
+  // Mobile-only: the character/difficulty select steps are two separate
+  // screens with their own confirm button (see mobileCharacterSelect /
+  // mobileDifficultySelect) instead of desktop's single combined screen, so
+  // difficulty needs its own lock flag alongside player1Locked.
+  difficultyLocked: false,
   readyOpacity: 0,
 
   // Escape-to-quit confirmation, shown over the 'play' screen. update()
@@ -410,11 +429,24 @@ const ghostBalls = [
 ];
 
 let mouseX = -50, mouseY = -50; // raw pointer position, used as-is for menu clicks
-let crosshairX = -50, crosshairY = -50; // smoothed aiming position used in gameplay
+// Starts in front of the batter (the strike zone's crossing point, x=325,
+// y=265-290 -> center 277 - see the plate-crossing comment near the ball
+// physics step) instead of the off-screen corner, so it's already visible
+// and useful before the mouse/joystick ever moves - matters most on mobile,
+// where the joystick doesn't touch crosshairX/Y at all until first dragged.
+let crosshairX = toX(325), crosshairY = toY(277); // smoothed aiming position used in gameplay
 let crosshairRadius = toLen(11);
 let criticalRadius = toLen(3.5);
 let critHidden = false;
 let crosshairStyle = 'normal'; // normal | blackout
+
+// Mobile digital joystick: dx/dy are the stick's current deflection,
+// normalized to -1..1 per axis. touchId identifies which finger owns the
+// stick (see the touchstart/touchmove/touchend handlers) so a second finger
+// tapping another button doesn't steal or reset it. stepCrosshair() reads
+// dx/dy every tick to move the crosshair while touchId isn't null.
+const joystick = { touchId: null, dx: 0, dy: 0 };
+const JOYSTICK_BASE = { x: 45, y: 370, radius: 35 }; // 0-400 unit space, bottom-left
 
 function resetBall() {
   ball.x = toX(61);
@@ -1170,7 +1202,14 @@ function handleVersusSelectKey(key) {
 
 function beginGame() {
   app.screen = 'play';
-  app.homePitching = true;
+  // Solo starts with the human batting (homePitching=false -> assignActiveRoles()
+  // gives p1 the batter role, CPU pitches) instead of the old pitch-first
+  // default - versus mode is untouched, still p1 pitching/p2 batting first.
+  // battingTeamIsHome() (=!homePitching) is derived from this same flag every
+  // half-inning via assignActiveRoles(), so p1's runs always land under
+  // "P1-Home" regardless of which role they start in - flipping the initial
+  // value doesn't break that pairing.
+  app.homePitching = app.mode === 'solo' ? false : true;
   assignActiveRoles();
   if (app.mode === 'solo') app.cpuBatterIndex = randRange(0, CHARACTERS.length);
   resetBall();
@@ -1343,29 +1382,117 @@ canvas.addEventListener('mousemove', e => {
   mouseY = (e.clientY - r.top) * scaleY;
 });
 
-canvas.addEventListener('mousedown', e => {
-  if (app.screen === 'mode') { handleModeClick(mouseX, mouseY); return; }
+// Bug fix: nothing previously stopped a second mousedown from registering
+// another full swing (resetting checkHit/isBatting) while the current
+// swing's animation was still playing out - a double-fired click (or two
+// quick presses) produced two swings/resolutions for what should be one.
+// Once a swing is in progress, ignore further attempts until it finishes.
+// Shared by the desktop click-to-swing handler and the mobile Swing button.
+function attemptSwing() {
+  if (app.isBatting) return;
+  app.isBatting = true;
+  app.checkHit = true;
+  app.swung = true;
+}
+
+// Shared by the mouse and touch input paths (see the touchstart listener
+// below) so tapping a button on a touch device and clicking it with a mouse
+// (used while testing with ?mobile=1, which has no real touch hardware)
+// dispatch through the exact same logic.
+function handlePointerDown(x, y) {
+  if (app.screen === 'mode') { handleModeClick(x, y); return; }
   if (app.screen === 'characterSolo' || app.screen === 'characterVersus') {
-    if (pointInBackButton(mouseX, mouseY)) goBackToModeSelect();
+    if (pointInBackButton(x, y)) goBackToModeSelect();
     return;
   }
+  if (app.screen === 'mobileCharacterSelect') { handleMobileCharacterSelectTap(x, y); return; }
+  if (app.screen === 'mobileDifficultySelect') { handleMobileDifficultySelectTap(x, y); return; }
   if (app.screen !== 'play') return;
-  if (app.showQuitConfirm) return;
-  if (app.activeBatterKey === 'cpu') return;
-  // Bug fix: nothing previously stopped a second mousedown from registering
-  // another full swing (resetting checkHit/isBatting) while the current
-  // swing's animation was still playing out - a double-fired click (or two
-  // quick presses) produced two swings/resolutions for what should be one.
-  // Once a swing is in progress, ignore further clicks until it finishes.
-  if (app.isBatting) return;
-  if (mouseX > toX(250)) {
-    app.isBatting = true;
-    app.checkHit = true;
-    app.swung = true;
+  if (app.showQuitConfirm) {
+    if (pointInQuitYesButton(x, y)) quitToModeSelect();
+    else if (pointInQuitNoButton(x, y)) app.showQuitConfirm = false;
+    return;
   }
-});
+  if (IS_MOBILE) { handleMobilePlayTap(x, y); return; }
+  if (app.activeBatterKey === 'cpu') return;
+  if (x > toX(250)) attemptSwing();
+}
+
+canvas.addEventListener('mousedown', e => handlePointerDown(mouseX, mouseY));
+
+function touchToCanvasXY(touch) {
+  const r = canvas.getBoundingClientRect();
+  const scaleX = CANVAS_W / r.width, scaleY = CANVAS_H / r.height;
+  return { x: (touch.clientX - r.left) * scaleX, y: (touch.clientY - r.top) * scaleY };
+}
+
+// A generous hit-region around the joystick's visible base (1.6x its radius)
+// so a finger landing just outside the drawn circle still grabs it.
+function pointInJoystickZone(x, y) {
+  const bx = toX(JOYSTICK_BASE.x), by = toY(JOYSTICK_BASE.y);
+  return Math.hypot(x - bx, y - by) <= toLen(JOYSTICK_BASE.radius) * 1.6;
+}
+
+function updateJoystickDeflection(x, y) {
+  const bx = toX(JOYSTICK_BASE.x), by = toY(JOYSTICK_BASE.y), maxR = toLen(JOYSTICK_BASE.radius);
+  let dx = x - bx, dy = y - by;
+  const dist = Math.hypot(dx, dy);
+  if (dist > maxR) { dx = dx / dist * maxR; dy = dy / dist * maxR; }
+  joystick.dx = dx / maxR;
+  joystick.dy = dy / maxR;
+}
+
+// preventDefault (and the {passive:false} needed to allow it) stops the page
+// from scrolling/zooming/pull-to-refreshing while dragging the joystick or
+// mashing buttons during play.
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  for (const touch of e.changedTouches) {
+    const { x, y } = touchToCanvasXY(touch);
+    // Only the batting layout has a joystick at all (drawMobileControls) -
+    // a touch landing in that zone during any other screen/role just falls
+    // through to the normal tap dispatch below.
+    if (app.screen === 'play' && !app.showQuitConfirm && app.activeBatterKey !== 'cpu'
+        && joystick.touchId === null && pointInJoystickZone(x, y)) {
+      joystick.touchId = touch.identifier;
+      updateJoystickDeflection(x, y);
+    } else {
+      handlePointerDown(x, y);
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === joystick.touchId) {
+      const { x, y } = touchToCanvasXY(touch);
+      updateJoystickDeflection(x, y);
+    }
+  }
+}, { passive: false });
+
+// Releasing the joystick finger stops crosshair movement (stepCrosshair())
+// rather than snapping the knob back to a "centered = still moving" state -
+// see stepCrosshair()'s mobile branch.
+function releaseJoystickTouch(e) {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === joystick.touchId) {
+      joystick.touchId = null; joystick.dx = 0; joystick.dy = 0;
+    }
+  }
+}
+canvas.addEventListener('touchend', releaseJoystickTouch, { passive: true });
+canvas.addEventListener('touchcancel', releaseJoystickTouch, { passive: true });
 
 function handleModeClick(x, y) {
+  if (IS_MOBILE) {
+    if (pointInPlayButton(x, y)) {
+      app.mode = 'solo'; app.screen = 'mobileCharacterSelect';
+      randomizeCharacterCursor('solo');
+    }
+    return;
+  }
   if (x >= toX(125) && x <= toX(275) && y >= toY(250) && y <= toY(330)) {
     app.modeSelectIndex = 1;
     app.mode = 'versus'; app.screen = 'characterVersus';
@@ -1378,14 +1505,68 @@ function handleModeClick(x, y) {
 }
 
 const BACK_BUTTON = { x: 10, y: 10, w: 70, h: 32 };
-function pointInBackButton(x, y) {
-  return x >= toX(BACK_BUTTON.x) && x <= toX(BACK_BUTTON.x) + lenX(BACK_BUTTON.w)
-    && y >= toY(BACK_BUTTON.y) && y <= toY(BACK_BUTTON.y) + toLen(BACK_BUTTON.h);
+// In-game only: the top-left BACK_BUTTON spot sits under the scoreboard
+// (rect at y:8-83, see drawScoreboard) once gameplay starts, so
+// drawMobileControls()/handleMobilePlayTap() use this lower position
+// instead - every other screen (no scoreboard) keeps using BACK_BUTTON.
+const BACK_BUTTON_INGAME = { x: 10, y: 90, w: 70, h: 32 };
+function pointInBackButton(x, y, btn) {
+  btn = btn || BACK_BUTTON;
+  return x >= toX(btn.x) && x <= toX(btn.x) + lenX(btn.w)
+    && y >= toY(btn.y) && y <= toY(btn.y) + toLen(btn.h);
 }
-function drawBackButton() {
-  const bx = toX(BACK_BUTTON.x), by = toY(BACK_BUTTON.y), bw = lenX(BACK_BUTTON.w), bh = toLen(BACK_BUTTON.h);
+function drawBackButton(btn) {
+  btn = btn || BACK_BUTTON;
+  const bx = toX(btn.x), by = toY(btn.y), bw = lenX(btn.w), bh = toLen(btn.h);
   rect(bx, by, bw, bh, 'rgba(0,0,0,0.5)', 1, 'white', 2);
   text('< Back', bx + bw / 2, by + bh / 2, 16, 'white', 1, 'center', 700);
+}
+
+// Shared bottom-left prev/next triangle buttons + bottom-right Confirm
+// button used by both mobile select screens (mobileCharacterSelect and
+// mobileDifficultySelect) - same layout, same hit-testing, only the action
+// each screen wires them to differs. Sizes use toLen() for both dimensions
+// (not lenX() for width) so the buttons render as true squares instead of
+// stretching with the canvas's non-uniform X/Y scale - same reasoning as
+// drawPitchMenu's boxSize.
+const MOBILE_NAV_BTN = { size: 50, y: 335 };
+const MOBILE_NAV_LEFT_X = 20;
+const MOBILE_NAV_RIGHT_X = 82;
+const MOBILE_CONFIRM_BUTTON = { x: 280, y: 335, w: 110, h: 50 };
+
+function pointInMobileNavLeft(x, y) {
+  return x >= toX(MOBILE_NAV_LEFT_X) && x <= toX(MOBILE_NAV_LEFT_X) + toLen(MOBILE_NAV_BTN.size)
+    && y >= toY(MOBILE_NAV_BTN.y) && y <= toY(MOBILE_NAV_BTN.y) + toLen(MOBILE_NAV_BTN.size);
+}
+function pointInMobileNavRight(x, y) {
+  return x >= toX(MOBILE_NAV_RIGHT_X) && x <= toX(MOBILE_NAV_RIGHT_X) + toLen(MOBILE_NAV_BTN.size)
+    && y >= toY(MOBILE_NAV_BTN.y) && y <= toY(MOBILE_NAV_BTN.y) + toLen(MOBILE_NAV_BTN.size);
+}
+function pointInMobileConfirm(x, y) {
+  const b = MOBILE_CONFIRM_BUTTON;
+  return x >= toX(b.x) && x <= toX(b.x) + lenX(b.w) && y >= toY(b.y) && y <= toY(b.y) + toLen(b.h);
+}
+function drawMobileNavButtons() {
+  const s = toLen(MOBILE_NAV_BTN.size), by = toY(MOBILE_NAV_BTN.y);
+  const lx = toX(MOBILE_NAV_LEFT_X), rx = toX(MOBILE_NAV_RIGHT_X);
+  rect(lx, by, s, s, 'rgba(0,0,0,0.5)', 1, 'white', 2);
+  drawArrowTriangle(lx + s / 2, by + s / 2, toLen(22), -1, 1);
+  rect(rx, by, s, s, 'rgba(0,0,0,0.5)', 1, 'white', 2);
+  drawArrowTriangle(rx + s / 2, by + s / 2, toLen(22), 1, 1);
+}
+function drawMobileConfirmButton(label) {
+  const b = MOBILE_CONFIRM_BUTTON;
+  const bx = toX(b.x), by = toY(b.y), bw = lenX(b.w), bh = toLen(b.h);
+  rect(bx, by, bw, bh, 'gold', 1, 'white', 3);
+  text(label || 'Confirm', bx + bw / 2, by + bh / 2, 20, '#222', 1, 'center', 900);
+}
+
+// Mobile has no 2-player mode, so the mode-select screen collapses to one
+// "Play" box in roughly the same spot the desktop "Solo" box occupies.
+const PLAY_BUTTON = { x: 125, y: 150, w: 150, h: 90 };
+function pointInPlayButton(x, y) {
+  return x >= toX(PLAY_BUTTON.x) && x <= toX(PLAY_BUTTON.x) + lenX(PLAY_BUTTON.w)
+    && y >= toY(PLAY_BUTTON.y) && y <= toY(PLAY_BUTTON.y) + toLen(PLAY_BUTTON.h);
 }
 
 /* ============================== MENU DRAWING ============================== */
@@ -1394,6 +1575,13 @@ function drawModeSelect() {
   drawMenuParticles();
   drawCharacterShowcase();
   drawTitleLogo();
+
+  if (IS_MOBILE) {
+    rect(toX(PLAY_BUTTON.x), toY(PLAY_BUTTON.y), lenX(PLAY_BUTTON.w), toLen(PLAY_BUTTON.h), 'gold', 1, 'white', 5);
+    text('Play', toX(200), toY(PLAY_BUTTON.y + PLAY_BUTTON.h / 2), 46, '#222', 1, 'center', 900);
+    text('Tap To Play', CANVAS_W / 2, toY(360), 16, 'white', 0.85, 'center', 700);
+    return;
+  }
 
   rect(toX(125), toY(70), lenX(150), toLen(80), 'gold', 1,
     app.modeSelectIndex === 0 ? 'white' : null, 5);
@@ -1444,6 +1632,73 @@ function drawReadyOverlay(label) {
   rect(0, toY(255), CANVAS_W, toLen(30), 'gold', 0.8 * op);
   text('READY', CANVAS_W / 2, toY(140), 90, '#8b0000', op, 'center', 900);
   text(label || 'Press Enter To Start', CANVAS_W / 2, toY(270), 28, '#8b0000', op, 'center', 700);
+}
+
+// Mobile solo flow: character select, then (separately) difficulty select,
+// each its own screen with its own Confirm button - unlike desktop's single
+// combined drawSoloSelect() screen. Reuses drawPortraitCard() (already
+// generic) and the shared nav/confirm button helpers above.
+function drawMobileCharacterSelect() {
+  drawStadium();
+  ctx.fillStyle = linearGradient(0, 0, 0, CANVAS_H, ['#8b5a2b', '#cd853f']);
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  rect(0, 0, CANVAS_W, CANVAS_H, null, 1, 'black', 2);
+
+  text('Choose Your Character', CANVAS_W / 2, toY(40), 30, 'white', 1, 'center', 900);
+
+  const char = CHARACTERS[app.player1Index];
+  drawPortraitCard(CANVAS_W / 2, toY(190), lenX(150), toLen(220), char, false, char.color);
+
+  drawBackButton();
+  drawMobileNavButtons();
+  drawMobileConfirmButton('Confirm');
+  text('◀ / ▶ To Browse', CANVAS_W / 2, toY(300), 16, 'white', 0.85, 'center', 700);
+}
+
+function handleMobileCharacterSelectTap(x, y) {
+  if (pointInBackButton(x, y)) { goBackToModeSelect(); return; }
+  if (pointInMobileNavLeft(x, y)) { app.player1Index = (app.player1Index + CHARACTERS.length - 1) % CHARACTERS.length; return; }
+  if (pointInMobileNavRight(x, y)) { app.player1Index = (app.player1Index + 1) % CHARACTERS.length; return; }
+  if (pointInMobileConfirm(x, y)) { app.player1Locked = true; app.screen = 'mobileDifficultySelect'; }
+}
+
+function drawMobileDifficultySelect() {
+  drawStadium();
+  ctx.fillStyle = linearGradient(0, 0, 0, CANVAS_H, ['#8b5a2b', '#cd853f']);
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  rect(0, 0, CANVAS_W, CANVAS_H, null, 1, 'black', 2);
+
+  text('CPU Difficulty', CANVAS_W / 2, toY(50), 34, 'white', 1, 'center', 900);
+
+  const diffBoxX = toX(125), diffBoxY = toY(120), diffBoxW = lenX(150), diffBoxH = toLen(110);
+  rect(diffBoxX, diffBoxY, diffBoxW, diffBoxH, 'rgba(255,255,255,0.08)', 1, 'white', 3);
+  text(DIFFICULTY_NAMES[app.difficultyIndex], diffBoxX + diffBoxW / 2, diffBoxY + diffBoxH / 2, 40,
+    DIFFICULTY_COLORS[app.difficultyIndex], 1, 'center', 900);
+
+  drawBackButton();
+
+  if (app.difficultyLocked) {
+    if (app.readyOpacity < 80) app.readyOpacity = Math.min(80, app.readyOpacity + 5);
+    drawReadyOverlay('Tap Anywhere To Start');
+  } else {
+    drawMobileNavButtons();
+    drawMobileConfirmButton('Confirm');
+    text('◀ / ▶ To Change', CANVAS_W / 2, toY(300), 16, 'white', 0.85, 'center', 700);
+  }
+}
+
+function handleMobileDifficultySelectTap(x, y) {
+  // Once locked, the ready overlay owns the whole screen - any tap starts
+  // the game (readyOpacity's fade-in gate matches desktop's own Enter-To-
+  // Start behavior, so a stray tap during the fade doesn't skip it).
+  if (app.difficultyLocked) {
+    if (app.readyOpacity >= 80) beginGame();
+    return;
+  }
+  if (pointInBackButton(x, y)) { app.screen = 'mobileCharacterSelect'; app.player1Locked = false; app.readyOpacity = 0; return; }
+  if (pointInMobileNavLeft(x, y)) { app.difficultyIndex = (app.difficultyIndex + 2) % 3; return; }
+  if (pointInMobileNavRight(x, y)) { app.difficultyIndex = (app.difficultyIndex + 1) % 3; return; }
+  if (pointInMobileConfirm(x, y)) { app.difficultyLocked = true; }
 }
 
 function drawSoloSelect() {
@@ -1597,6 +1852,162 @@ function drawPowerUpUi() {
     const mLabelW = Math.max(textWidth('Power Up', 15, 700), textWidth('(Batter)', 12, 400));
     const bIcon = batIcons[batterChar().key];
     drawImageTopLeft(bIcon, mLabelX + mLabelW + lenX(8), mBoxY - toLen(2), toLen(40), toLen(40));
+  }
+}
+
+/* ============================== MOBILE IN-GAME CONTROLS ============================== */
+// Solo mode always has the human as exactly one of pitcher/batter (the other
+// is CPU) - drawMobileControls() picks the matching layout the same way
+// drawPitchMenu()/drawPowerUpUi() already do (activePitcherKey/activeBatterKey
+// !== 'cpu'), so the two layouts never need to coexist.
+const SWING_BUTTON = { x: 325, y: 335, size: 55 };
+const POWERUP_BUTTON = { x: 173, y: 342, size: 55 }; // batting layout: bottom-center, between joystick and swing
+// Pitching layout: same circular design as the batting one, sitting right
+// under the pitcher (PITCHER_FRAME_META centers around x~26-37 -> roughly
+// x:26-58 unit-wise once the sprite box is accounted for, feet at y~300).
+// y is set so its center lines up with PITCH_BUTTON_SIZE's center (330 +
+// 60/2 = 360), so the power-up circle sits in the same row as the 4 pitch
+// buttons rather than floating above them.
+const POWERUP_BUTTON_PITCHING = { x: 15, y: 332.5, size: 55 };
+// Narrower/shifted right of their original spread so the 4 buttons still
+// span x:80-390 without overlapping the power-up circle now at x:15-70.
+const PITCH_BUTTON_SIZE = { w: 73, y: 330, h: 60 };
+const PITCH_BUTTONS = [
+  { key: 'w', arrowKey: 'arrowup', label: 'Fastball', type: 'fastball', x: 80 },
+  { key: 'a', arrowKey: 'arrowleft', label: 'Knuckleball', type: 'knuckleball', x: 159 },
+  { key: 's', arrowKey: 'arrowdown', label: 'Curveball', type: 'curveball', x: 238 },
+  { key: 'd', arrowKey: 'arrowright', label: 'Riser', type: 'riser', x: 317 },
+];
+
+function drawMobileControls() {
+  drawBackButton(BACK_BUTTON_INGAME); // action is overridden to open the quit-confirm modal - see handleMobilePlayTap()
+
+  if (app.activeBatterKey !== 'cpu') {
+    drawJoystick();
+    drawSwingButton();
+    drawPowerupButton(POWERUP_BUTTON, app.batPowerFull, batIcons[batterChar().key]);
+  } else if (app.activePitcherKey !== 'cpu') {
+    drawPitchButtons();
+    drawPowerupButton(POWERUP_BUTTON_PITCHING, app.pitchPowerFull, pitchIcons[pitcherChar().key]);
+  }
+}
+
+function drawJoystick() {
+  const bx = toX(JOYSTICK_BASE.x), by = toY(JOYSTICK_BASE.y), r = toLen(JOYSTICK_BASE.radius);
+  circle(bx, by, r, 'rgba(255,255,255,0.15)', 1, 'white', 2);
+  const knobR = r * 0.45;
+  const kx = bx + joystick.dx * (r - knobR);
+  const ky = by + joystick.dy * (r - knobR);
+  circle(kx, ky, knobR, 'rgba(255,255,255,0.7)', 1, 'white', 2);
+}
+
+function pointInSwingButton(x, y) {
+  const s = toLen(SWING_BUTTON.size);
+  const cx = toX(SWING_BUTTON.x) + s / 2, cy = toY(SWING_BUTTON.y) + s / 2;
+  return Math.hypot(x - cx, y - cy) <= s / 2;
+}
+function drawSwingButton() {
+  const s = toLen(SWING_BUTTON.size);
+  const cx = toX(SWING_BUTTON.x) + s / 2, cy = toY(SWING_BUTTON.y) + s / 2;
+  const disabled = app.isBatting;
+  circle(cx, cy, s / 2, disabled ? 'rgba(120,120,120,0.55)' : 'rgba(220,30,30,0.8)', 1, 'white', 3);
+  text('SWING', cx, cy, 14, 'white', 1, 'center', 900);
+}
+
+// Same circular design as the Swing button (and the shoulder power badges on
+// the character-select portrait card, drawShoulderPowerIcons) - a dark disc
+// with the character's power icon inside and a gold/gray ring for whether
+// it's available yet.
+function pointInPowerupButton(btn, x, y) {
+  const s = toLen(btn.size);
+  const cx = toX(btn.x) + s / 2, cy = toY(btn.y) + s / 2;
+  return Math.hypot(x - cx, y - cy) <= s / 2;
+}
+function drawPowerupButton(btn, full, icon) {
+  const s = toLen(btn.size);
+  const cx = toX(btn.x) + s / 2, cy = toY(btn.y) + s / 2;
+  circle(cx, cy, s / 2, 'rgba(0,0,0,0.65)', 1, full ? 'gold' : 'dimgray', 3);
+  const iconSize = s * 0.62;
+  drawImageTopLeft(icon, cx - iconSize / 2, cy - iconSize / 2, iconSize, iconSize);
+}
+
+function pointInPitchButton(p, x, y) {
+  const bx = toX(p.x), by = toY(PITCH_BUTTON_SIZE.y), bw = lenX(PITCH_BUTTON_SIZE.w), bh = toLen(PITCH_BUTTON_SIZE.h);
+  return x >= bx && x <= bx + bw && y >= by && y <= by + bh;
+}
+function drawPitchButtons() {
+  PITCH_BUTTONS.forEach(p => {
+    const bx = toX(p.x), by = toY(PITCH_BUTTON_SIZE.y), bw = lenX(PITCH_BUTTON_SIZE.w), bh = toLen(PITCH_BUTTON_SIZE.h);
+    rect(bx, by, bw, bh, 'rgba(0,0,0,0.6)', 1, 'white', 2);
+    text(p.label, bx + bw / 2, by + toLen(14), 12, 'white', 1, 'center', 700);
+    drawPitchPathIcon(bx + toLen(8), by + toLen(24), bw - toLen(16), toLen(28), p.type);
+  });
+}
+
+// A small trajectory diagram for each pitch button: a line from the button's
+// left edge to a baseball glyph on the right, shaped per pitch type -
+// Fastball is straight, Riser is one continuous ease-in curve rising from a
+// low/flat start to a high finish, Curveball is one continuous ease-in curve
+// that stays high through most of the path before breaking sharply down at
+// the end, Knuckleball "swivels" through two opposite curves before
+// settling at the ball. Riser/Curveball each use a single quadraticCurveTo
+// (not two chained segments) - putting the control point at the START
+// height keeps the curve flat/slow early and bending increasingly toward
+// the end, which reads as a smooth, non-linear ease rather than a straight
+// diagonal.
+function drawPitchPathIcon(x, y, w, h, type) {
+  const y0 = y + h / 2;
+  const ballR = h * 0.22;
+  const ballX = x + w - ballR;
+  // Every pitch's ball lands at the same spot (y0), matching where the
+  // batter actually sees it arrive regardless of pitch type - Riser/
+  // Curveball get there by starting off that line instead of ending off it:
+  // the whole curve is shifted so only the START moves, keeping the same
+  // shape/easing as before.
+  const ballY = y0;
+  let startY = y0;
+  if (type === 'riser') startY = y0 + h * 0.4; // starts low, arrives at y0
+  else if (type === 'curveball') startY = y0 - h * 0.4; // starts high, arrives at y0
+
+  ctx.save();
+  ctx.strokeStyle = 'white';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, startY);
+  if (type === 'fastball') {
+    ctx.lineTo(ballX, ballY);
+  } else if (type === 'riser') {
+    // Starts low/flat, slowly bends upward, finishes at the shared spot.
+    ctx.quadraticCurveTo(x + w * 0.55, startY, ballX, ballY);
+  } else if (type === 'curveball') {
+    // Starts high, stays roughly level, then breaks sharply down to the
+    // shared spot.
+    ctx.quadraticCurveTo(x + w * 0.65, startY, ballX, ballY);
+  } else { // knuckleball - swivels up then down before reaching the ball
+    ctx.quadraticCurveTo(x + w * 0.28, y0 - h * 0.5, x + w * 0.5, y0);
+    ctx.quadraticCurveTo(x + w * 0.72, y0 + h * 0.5, ballX, y0);
+  }
+  ctx.stroke();
+  ctx.restore();
+  circle(ballX, ballY, ballR, 'white', 1, '#999', 1);
+}
+
+// Dispatches a tap/click during the 'play' screen on mobile to whichever
+// on-screen control it landed on. Pitch/power-up buttons deliberately just
+// call handleGameplayKey() with the equivalent key instead of duplicating
+// its logic - every guard (canStartPitch(), power-already-used, dice-in-
+// progress, etc.) already lives there and applies automatically this way.
+function handleMobilePlayTap(x, y) {
+  if (pointInBackButton(x, y, BACK_BUTTON_INGAME)) { app.showQuitConfirm = true; return; }
+
+  if (app.activeBatterKey !== 'cpu') {
+    if (pointInSwingButton(x, y)) { attemptSwing(); return; }
+    if (pointInPowerupButton(POWERUP_BUTTON, x, y)) { handleGameplayKey('m'); return; }
+  } else if (app.activePitcherKey !== 'cpu') {
+    for (const p of PITCH_BUTTONS) {
+      if (pointInPitchButton(p, x, y)) { handleGameplayKey(app.homePitching ? p.key : p.arrowKey); return; }
+    }
+    if (pointInPowerupButton(POWERUP_BUTTON_PITCHING, x, y)) { handleGameplayKey('z'); return; }
   }
 }
 
@@ -1816,6 +2227,7 @@ function drawCrosshair() {
 // through the swing animation too, same as the crosshair.
 function drawSwingHint() {
   if (app.activeBatterKey === 'cpu') return;
+  if (IS_MOBILE) return; // the on-screen Swing button (drawMobileControls) replaces this hint
 
   const label = 'Click To Swing';
   const size = 13;
@@ -1871,26 +2283,62 @@ function drawFireTuneOverlay() {
   text('0-5 pick frame (0=ready) | arrows nudge x/y | [ ] rotate | F to exit', bx + bw / 2, by + toLen(58), 11, 'white', 0.85, 'center');
 }
 
+// A fixed-aspect overlay, independent of the field's stretched 400-unit
+// grid, so it's laid out in raw canvas pixels rather than toX/lenX/toLen -
+// pw < ph on purpose (a "vertical rectangle", taller than wide). Enter/Y and
+// Escape/N (see handleGameplayKey) still work as keyboard shortcuts; these
+// are the clickable/tappable equivalent for mouse and touch.
+// Sizes below were measured against the actual rendered text (text()'s
+// toLen() scaling makes fonts render bigger than their raw "size" number
+// suggests, even in this raw-pixel-coordinate panel): 'LEAVE GAME?' at
+// size 26/900 measures ~367px, 'Yes, Leave' at size 20/900 measures ~211px -
+// the old 260px-wide panel and 190px-wide buttons were clipping both.
+const QUIT_PANEL = { w: 420, h: 350 };
+const QUIT_YES_BTN = { w: 260, h: 65, offsetY: 145 };
+const QUIT_NO_BTN = { w: 260, h: 65, offsetY: 225 };
+
+function quitPanelRect() {
+  const pw = QUIT_PANEL.w, ph = QUIT_PANEL.h;
+  return { px: CANVAS_W / 2 - pw / 2, py: CANVAS_H / 2 - ph / 2, pw, ph };
+}
+function pointInQuitYesButton(x, y) {
+  const { px, py, pw } = quitPanelRect();
+  const bx = px + (pw - QUIT_YES_BTN.w) / 2, by = py + QUIT_YES_BTN.offsetY;
+  return x >= bx && x <= bx + QUIT_YES_BTN.w && y >= by && y <= by + QUIT_YES_BTN.h;
+}
+function pointInQuitNoButton(x, y) {
+  const { px, py, pw } = quitPanelRect();
+  const bx = px + (pw - QUIT_NO_BTN.w) / 2, by = py + QUIT_NO_BTN.offsetY;
+  return x >= bx && x <= bx + QUIT_NO_BTN.w && y >= by && y <= by + QUIT_NO_BTN.h;
+}
+
 function drawQuitConfirm() {
   if (!app.showQuitConfirm) return;
 
   rect(0, 0, CANVAS_W, CANVAS_H, 'black', 0.7);
 
-  const pw = lenX(220), ph = toLen(130);
-  const px = CANVAS_W / 2 - pw / 2, py = CANVAS_H / 2 - ph / 2;
-  rect(px, py, pw, ph, 'rgba(20,20,26,0.97)', 1, 'white', 2);
+  const { px, py, pw } = quitPanelRect();
+  rect(px, py, pw, QUIT_PANEL.h, 'rgba(20,20,26,0.97)', 1, 'white', 2);
 
-  text('LEAVE GAME?', CANVAS_W / 2, py + toLen(34), 30, 'white', 1, 'center', 900);
-  text('Your current match will be lost.', CANVAS_W / 2, py + toLen(64), 15, '#cccccc', 1, 'center', 400);
-  text('Enter / Y  —  Yes, leave', CANVAS_W / 2, py + toLen(94), 16, '#4dff4d', 1, 'center', 700);
-  text('Esc / N  —  No, stay', CANVAS_W / 2, py + toLen(114), 16, '#ff4d4d', 1, 'center', 700);
+  text('LEAVE GAME?', CANVAS_W / 2, py + 50, 26, 'white', 1, 'center', 900);
+  text('Your current match', CANVAS_W / 2, py + 85, 14, '#cccccc', 1, 'center', 400);
+  text('will be lost.', CANVAS_W / 2, py + 105, 14, '#cccccc', 1, 'center', 400);
+
+  const yesX = px + (pw - QUIT_YES_BTN.w) / 2, yesY = py + QUIT_YES_BTN.offsetY;
+  rect(yesX, yesY, QUIT_YES_BTN.w, QUIT_YES_BTN.h, 'rgba(210,30,30,0.85)', 1, 'white', 2);
+  text('Yes, Leave', yesX + QUIT_YES_BTN.w / 2, yesY + QUIT_YES_BTN.h / 2, 20, 'white', 1, 'center', 900);
+
+  const noX = px + (pw - QUIT_NO_BTN.w) / 2, noY = py + QUIT_NO_BTN.offsetY;
+  rect(noX, noY, QUIT_NO_BTN.w, QUIT_NO_BTN.h, 'rgba(30,150,30,0.85)', 1, 'white', 2);
+  text('No, Stay', noX + QUIT_NO_BTN.w / 2, noY + QUIT_NO_BTN.h / 2, 20, 'white', 1, 'center', 900);
 }
 
 function drawGameplay() {
   drawField();
   drawScoreboard();
-  drawPitchMenu();
-  drawPowerUpUi();
+  // Desktop's key-hint boxes (WASD/arrows, Z/M) don't mean anything on a
+  // touchscreen - drawMobileControls() below is the mobile equivalent.
+  if (!IS_MOBILE) { drawPitchMenu(); drawPowerUpUi(); }
   drawSprites();
   drawPowerupEffects();
   drawBall();
@@ -1901,6 +2349,7 @@ function drawGameplay() {
   drawCallBanner();
   drawFireTuneOverlay();
   drawPauseAnim();
+  if (IS_MOBILE) drawMobileControls();
   drawQuitConfirm(); // on top of absolutely everything, including Pause's own freeze overlay
 }
 
@@ -1918,13 +2367,20 @@ function flashOpacity(progress) {
 }
 
 function drawPlayTriangle(cx, cy, size, opacity) {
+  drawArrowTriangle(cx, cy, size, 1, opacity);
+}
+
+// Right-pointing (dir=1) or left-pointing (dir=-1) triangle - used for the
+// pause screen's play icon (dir=1, via drawPlayTriangle) and the mobile menu
+// screens' prev/next character-or-difficulty nav buttons (either dir).
+function drawArrowTriangle(cx, cy, size, dir, opacity) {
   ctx.save();
   ctx.globalAlpha = opacity;
   ctx.fillStyle = 'white';
   ctx.beginPath();
-  ctx.moveTo(cx - size * 0.3, cy - size * 0.5);
-  ctx.lineTo(cx - size * 0.3, cy + size * 0.5);
-  ctx.lineTo(cx + size * 0.5, cy);
+  ctx.moveTo(cx - size * 0.3 * dir, cy - size * 0.5);
+  ctx.lineTo(cx - size * 0.3 * dir, cy + size * 0.5);
+  ctx.lineTo(cx + size * 0.5 * dir, cy);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
@@ -1999,6 +2455,8 @@ function render() {
   if (app.screen === 'mode') drawModeSelect();
   else if (app.screen === 'characterSolo') drawSoloSelect();
   else if (app.screen === 'characterVersus') drawVersusSelect();
+  else if (app.screen === 'mobileCharacterSelect') drawMobileCharacterSelect();
+  else if (app.screen === 'mobileDifficultySelect') drawMobileDifficultySelect();
   else if (app.screen === 'play') drawGameplay();
 }
 
@@ -2533,9 +2991,27 @@ function stepCallBanner() {
   }
 }
 
-// Ice Ball: while app.batterFrozen is set, the crosshair creeps toward the raw
-// mouse position in slow motion instead of snapping to it instantly.
+// How far the crosshair moves per tick at full joystick deflection. Lowered
+// from 6 - full deflection felt too twitchy/sensitive for fine aiming.
+const JOYSTICK_SPEED = toLen(3);
+
 function stepCrosshair() {
+  // A joystick reports a direction/deflection, not a position to chase, so
+  // it drives crosshairX/Y by velocity instead of the mouse's lerp-toward-a-
+  // point model below - and unlike that model, mobile must NEVER fall
+  // through to it even when the stick isn't currently held: mousemove never
+  // fires on a touch device, so mouseX/mouseY sit frozen at their initial
+  // off-screen (-50,-50) default, and lerpFactor=1 would snap the crosshair
+  // straight there the instant the stick is released. Releasing it should
+  // just stop movement in place - no snap - matching typical twin-stick aim.
+  if (IS_MOBILE) {
+    if (joystick.touchId !== null) {
+      const speedMul = app.batterFrozen ? 0.06 : 1; // Ice Ball slows aiming the same way it slows the mouse-chase below
+      crosshairX = Math.min(CANVAS_W, Math.max(0, crosshairX + joystick.dx * JOYSTICK_SPEED * speedMul));
+      crosshairY = Math.min(CANVAS_H, Math.max(0, crosshairY + joystick.dy * JOYSTICK_SPEED * speedMul));
+    }
+    return;
+  }
   const lerpFactor = app.batterFrozen ? 0.06 : 1;
   crosshairX += (mouseX - crosshairX) * lerpFactor;
   crosshairY += (mouseY - crosshairY) * lerpFactor;
