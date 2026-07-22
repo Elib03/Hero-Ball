@@ -409,6 +409,54 @@ function ensureMusicStarted() {
   musicSound.play().catch(() => { musicStarted = false; });
 }
 
+/* ============================== POKI SDK ============================== */
+// The game must work identically with no SDK present at all (local dev,
+// GitHub Pages, an ad blocker eating the script) - every call below is
+// guarded so a missing/failed PokiSDK never breaks actual gameplay.
+const pokiSdkAvailable = typeof PokiSDK !== 'undefined';
+if (pokiSdkAvailable) {
+  PokiSDK.init().then(() => {
+    // Nothing here blocks on a loading screen - the game already renders
+    // progressively (menu shows immediately, images/audio populate as they
+    // arrive) - so "loading finished" is true the instant init resolves.
+    PokiSDK.gameLoadingFinished();
+  }).catch(() => {});
+}
+
+// Tracks whether Poki currently considers the player "in gameplay", so
+// gameplayStart()/gameplayStop() never fire twice in a row for the same
+// state (Poki explicitly disallows duplicate events).
+let pokiGameplayActive = false;
+function pokiGameplayStart() {
+  if (!pokiSdkAvailable || pokiGameplayActive) return;
+  pokiGameplayActive = true;
+  PokiSDK.gameplayStart();
+}
+function pokiGameplayStop() {
+  if (!pokiSdkAvailable || !pokiGameplayActive) return;
+  pokiGameplayActive = false;
+  PokiSDK.gameplayStop();
+}
+
+// Requests an ad break right before gameplay (re)starts - the one moment
+// this game actually has that matches Poki's "heading back into gameplay"
+// timing rule, since there's no separate pause/resume menu to hook into
+// (see beginGame()). onDone runs whether or not an ad actually played;
+// Poki's own system decides that, not every call results in a visible ad.
+let pokiBreakPending = false;
+function pokiCommercialBreak(onDone) {
+  if (!pokiSdkAvailable) { onDone(); return; }
+  pokiBreakPending = true;
+  PokiSDK.commercialBreak(() => {
+    musicSound.pause();
+    crowdSound.pause();
+  }).then(() => {
+    pokiBreakPending = false;
+    if (musicStarted) musicSound.play().catch(() => {});
+    onDone();
+  });
+}
+
 /* ============================== CANVAS ============================== */
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -1042,6 +1090,7 @@ function switchSides() {
         // homeScore/awayScore back to 0.
         app.gameOverP1Wins = homeScore > awayScore;
         app.screen = 'gameOver';
+        pokiGameplayStop();
       }
     }
   }
@@ -1331,6 +1380,7 @@ function resetMatchState() {
 
 function quitToModeSelect() {
   app.showQuitConfirm = false;
+  pokiGameplayStop(); // no-ops if a match wasn't actually in progress
   goBackToModeSelect();
   resetMatchState();
 }
@@ -1392,7 +1442,7 @@ function handleVersusSelectKey(key) {
   }
 }
 
-function beginGame() {
+function startMatch() {
   app.screen = 'play';
   // Solo starts with the human batting (homePitching=false -> assignActiveRoles()
   // gives p1 the batter role, CPU pitches) instead of the old pitch-first
@@ -1405,13 +1455,27 @@ function beginGame() {
   assignActiveRoles();
   if (app.mode === 'solo') app.cpuBatterIndex = randRange(0, CHARACTERS.length);
   resetBall();
-  // beginGame() only ever runs after the player has already interacted with
+  // startMatch() only ever runs after the player has already interacted with
   // the menu (clicked/tapped Play, pressed Enter, etc.), so the browser's
   // autoplay-needs-a-user-gesture policy is already satisfied here.
   crowdVolume = CROWD_BASE_VOLUME;
   crowdSound.volume = CROWD_BASE_VOLUME;
   crowdSound.currentTime = 0;
   crowdSound.play().catch(() => {});
+}
+
+// Poki wants a commercialBreak() right before every gameplayStart() - this
+// game has no separate pause/resume menu to hook that into (see
+// pokiCommercialBreak()), so "about to start or restart a match" is the
+// closest real equivalent. pokiBreakPending guards against the player
+// mashing Enter/tap again while a break's still resolving and firing a
+// second overlapping one.
+function beginGame() {
+  if (pokiBreakPending) return;
+  pokiCommercialBreak(() => {
+    startMatch();
+    pokiGameplayStart();
+  });
 }
 
 /* ============================== INPUT: GAMEPLAY ============================== */
