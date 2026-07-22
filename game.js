@@ -357,6 +357,21 @@ function playSound(audio) {
   audio.play().catch(() => {});
 }
 
+function stopSound(audio) {
+  audio.pause();
+  audio.currentTime = 0;
+}
+
+// Gambler's Roll/Spin Cycle/Drone Ball sounds are tied to how long their
+// underlying animation actually runs (the dice rolling, the ball spinning,
+// the drone drifting) rather than being one-shot clips fired at activation -
+// looped here and started/stopped explicitly at the right animation
+// boundaries instead of just playing once on keypress.
+POWER_SOUNDS.gamblerBatting.loop = true;
+POWER_SOUNDS.gamblerPitching.loop = true;
+POWER_SOUNDS.spinCycle.loop = true;
+POWER_SOUNDS.droneBall.loop = true;
+
 // Background stadium ambience: loops continuously through a game, ducked to
 // a quiet baseline most of the time and briefly boosted louder right after
 // every swing (see attemptSwing()), then eased back down tick by tick (see
@@ -466,6 +481,7 @@ const app = {
   mirageCount: 0,
   spinCycleActive: false,
   spinCycleSpeed: 0,
+  spinCycleSoundOn: false,
   droneBallActive: false,
   droneCount: 0,
   droneNum: 0,
@@ -604,8 +620,11 @@ function resetBall() {
   app.futureSightCount = 0;
   app.spinCycleActive = false;
   app.spinCycleSpeed = 0;
+  app.spinCycleSoundOn = false;
+  stopSound(POWER_SOUNDS.spinCycle); // in case the pitch is resolved (hit/out) mid-spin, before the sound's own natural stop point
   app.droneBallActive = false;
   app.droneCount = 0;
+  stopSound(POWER_SOUNDS.droneBall); // same - covers a mid-flight resolution, not just the drone's own toX(300) exit
   app.showBallTrail = false;
   app.cpuSwung = false;
   app.swung = false;
@@ -860,12 +879,14 @@ function applyPitchVelocity(pitchName) {
     // the actual spin - the relaunch looked like a plain fast pitch instead
     // of "the same power-up" replaying. Reset it so every throw spins fresh.
     app.spinCycleSpeed = 0;
+    app.spinCycleSoundOn = false; // sound starts once the ball actually begins spinning, see stepSpinCycle()
   } else if (pitchName === 'DroneBall') {
     ball.xSpeed = lenX(10);
     ball.accel = 0;
     ball.y = toY(275); // clearly mid-zone (265-290), not right on the boundary - must be a strike
     app.droneBallActive = true;
     app.droneNum = randRange(0, 6);
+    playSound(POWER_SOUNDS.droneBall); // starts the instant the drone launches, loops for as long as it's moving
   } else if (pitchName === 'Ghost') {
     // Bug fix: Ghost Ball's Z-key arm never went through this function (it
     // materializes instantly with no windup), so this case was missing
@@ -1110,6 +1131,7 @@ function startDiceRoll(forBatting) {
   app.diceFinalFace = randRange(0, 6);
   app.diceSeed = randRange(0, 6); // only drives the spinning-face display now
   app.diceCardVisible = false;
+  playSound(forBatting ? POWER_SOUNDS.gamblerBatting : POWER_SOUNDS.gamblerPitching);
 }
 
 const DICE_SETTLE_HOLD = 25; // ticks the final rolled face freezes on-screen before the card slides in
@@ -1122,6 +1144,9 @@ function stepDiceRoll() {
       // before the outcome card starts flying in.
       app.diceSettling = true;
       app.diceSettleHoldCount = 0;
+      // The dice stop rolling here, so the sound stops here too instead of
+      // running through the settle hold/card-slide beats that follow.
+      stopSound(app.diceForBatting ? POWER_SOUNDS.gamblerBatting : POWER_SOUNDS.gamblerPitching);
     }
   }
 }
@@ -1295,6 +1320,8 @@ function resetMatchState() {
   app.mirrorBallActive = false;
   app.reverseBall = false;
   app.diceRolling = false;
+  stopSound(POWER_SOUNDS.gamblerBatting); // safety net if a mode/match reset happens mid-roll
+  stopSound(POWER_SOUNDS.gamblerPitching);
   app.mirageCount = 0;
   app.fireTuneActive = false;
   app.batPowerFull = true;
@@ -1488,7 +1515,11 @@ function handleGameplayKey(key) {
   if (key === 'm' && humanBatting && app.batPowerFull && !app.diceRolling) {
     const power = batterChar().bat.key;
     app.batPowerFull = false;
-    playSound(POWER_SOUNDS[power]);
+    // Only Gambler's Roll/Mirror Ball/Future Sight have power-up sounds among
+    // the batting powers. Gambler's Roll and Mirror Ball don't play here -
+    // their sound is tied to a later animation beat (see startDiceRoll() and
+    // resolveUnswungStrike()'s reverseBall branch, respectively) - everything
+    // else now activates silently.
     // Fire: the whole crosshair becomes a "critical crosshair" - any contact at
     // all is a Home Run while it's active. Persists until contact or inning change.
     if (power === 'fire') { app.batFireVisible = true; }
@@ -1500,7 +1531,7 @@ function handleGameplayKey(key) {
     else if (power === 'gamblerBatting') { startDiceRoll(true); }
     else if (power === 'mirrorBall') { app.mirrorBallActive = true; }
     else if (power === 'iceShield') { app.shieldWidth = lenX(9.001); }
-    else if (power === 'futureSight') { app.showFutureSight = true; }
+    else if (power === 'futureSight') { app.showFutureSight = true; playSound(POWER_SOUNDS.futureSight); }
     else if (power === 'blackoutSwing') { crosshairRadius = toLen(30); crosshairStyle = 'blackout'; critHidden = true; }
     else if (power === 'pause') { app.paused = true; }
     else if (power === 'guaranteedContact') { critHidden = true; crosshairRadius = toLen(25); }
@@ -1513,7 +1544,12 @@ function handleGameplayKey(key) {
   if (key === 'z' && humanPitching && app.pitchPowerFull && canStartPitch() && !ghostBalls[0].visible) {
     const power = pitcherChar().pitch.key;
     app.pitchPowerFull = false;
-    playSound(POWER_SOUNDS[power]);
+    // Only Spin Cycle/Drone Ball/Gambler's Roll have power-up sounds among the
+    // pitching powers, and none of them play here - Spin Cycle's starts once
+    // the ball is actually spinning (stepSpinCycle()), Drone Ball's starts the
+    // instant it launches (applyPitchVelocity()), and Gambler's Roll's starts
+    // with the dice roll itself (startDiceRoll()). Everything else now
+    // activates silently.
     // Void/Ghost/Meteor/SpinCycle/DroneBall/FastballPlus/Mirage/GamblerPitching all
     // launch or play out their own in-flight sequence, so powerUpActive blocks a
     // second pitch from being thrown mid-effect. Ball Shrink and Ice Ball are just
@@ -2720,6 +2756,7 @@ function resolveUnswungStrike() {
     ball.accel = 0;
     ball.ySpeed = 0;
     ball.xSpeed = 0.00001;
+    playSound(POWER_SOUNDS.mirrorBall); // plays once the ball actually starts bouncing back, not at activation
   }
 }
 
@@ -3042,12 +3079,15 @@ function stepSpinCycle() {
   // visibly slowed down. Check app.timeStopActive directly instead.
   const div = app.timeStopActive ? 20 : 1;
   if (ball.x >= toX(100)) {
+    if (!app.spinCycleSoundOn) { app.spinCycleSoundOn = true; playSound(POWER_SOUNDS.spinCycle); }
     ball.x = toX(150) - lenX(50) * Math.cos(app.spinCycleSpeed);
     ball.y = toY(250) + toLen(50) * Math.sin(app.spinCycleSpeed);
     app.spinCycleSpeed += (0.1 + app.spinCycleSpeed * 0.1) / div;
   }
   if (app.spinCycleSpeed > 1000000) {
     app.spinCycleActive = false;
+    app.spinCycleSoundOn = false;
+    stopSound(POWER_SOUNDS.spinCycle);
     ball.y = toY(270);
     ball.xSpeed = lenX(50) / div;
   }
