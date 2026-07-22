@@ -287,19 +287,34 @@ const BATTER_SWING_META = [
   { x: 334, y: 255, rotate: 0 },
 ];
 
+// Bug fix (size): these used to eagerly load all 11 sprite images for all
+// 10 characters (110 images, ~2.8MB) the instant the script ran, regardless
+// of which 2 characters ever actually get picked for a match - unlike
+// portraits/icons/menu art, sprites are never shown on the select screens,
+// so nothing is lost by only fetching a character's set the first time it's
+// actually needed (see getPitcherFrames()/getBatterFrames(), and
+// startMatch() which warms both active characters' sets right away).
 const pitcherFramesByChar = {};
 const batterFramesByChar = {};
-CHARACTERS.forEach(c => {
-  pitcherFramesByChar[c.key] = PITCHER_FRAME_META.map((f, i) => ({
-    img: loadImage(SPRITES_DIR + 'pitcher/' + c.key + '_' + (i + 1) + '.png'), x: f.x, y: f.y,
-  }));
-  batterFramesByChar[c.key] = {
-    ready: { img: loadImage(SPRITES_DIR + 'batter/' + c.key + '_ready.png'), x: BATTER_READY_META.x, y: BATTER_READY_META.y },
-    swings: BATTER_SWING_META.map((f, i) => ({
-      img: loadImage(SPRITES_DIR + 'batter/' + c.key + '_swing' + (i + 1) + '.png'), x: f.x, y: f.y, rotate: f.rotate,
-    })),
-  };
-});
+function getPitcherFrames(key) {
+  if (!pitcherFramesByChar[key]) {
+    pitcherFramesByChar[key] = PITCHER_FRAME_META.map((f, i) => ({
+      img: loadImage(SPRITES_DIR + 'pitcher/' + key + '_' + (i + 1) + '.png'), x: f.x, y: f.y,
+    }));
+  }
+  return pitcherFramesByChar[key];
+}
+function getBatterFrames(key) {
+  if (!batterFramesByChar[key]) {
+    batterFramesByChar[key] = {
+      ready: { img: loadImage(SPRITES_DIR + 'batter/' + key + '_ready.png'), x: BATTER_READY_META.x, y: BATTER_READY_META.y },
+      swings: BATTER_SWING_META.map((f, i) => ({
+        img: loadImage(SPRITES_DIR + 'batter/' + key + '_swing' + (i + 1) + '.png'), x: f.x, y: f.y, rotate: f.rotate,
+      })),
+    };
+  }
+  return batterFramesByChar[key];
+}
 
 const homeRunSound = document.getElementById('homeRunSound');
 
@@ -1454,6 +1469,11 @@ function startMatch() {
   app.homePitching = app.mode === 'solo' ? false : true;
   assignActiveRoles();
   if (app.mode === 'solo') app.cpuBatterIndex = randRange(0, CHARACTERS.length);
+  // Warm both active characters' sprite sets now, before the first
+  // drawSprites() call needs them - avoids a blank/undefined-image frame
+  // while the lazy loader's first fetch is still in flight.
+  getPitcherFrames(pitcherChar().key);
+  getBatterFrames(batterChar().key);
   resetBall();
   // startMatch() only ever runs after the player has already interacted with
   // the menu (clicked/tapped Play, pressed Enter, etc.), so the browser's
@@ -2356,7 +2376,7 @@ const BATTER_BIG_SCALE = 1.4;
 const PITCHER_SMALL_SCALE = 0.6;
 
 function drawSprites() {
-  const pitcherFrames = pitcherFramesByChar[pitcherChar().key];
+  const pitcherFrames = getPitcherFrames(pitcherChar().key);
   const pFrame = app.isPitching ? pitcherFrames[app.pitcherFrameIndex] : pitcherFrames[0];
   const pScale = app.pitcherSmall ? PITCHER_SMALL_SCALE : 1;
   drawImageCenteredScale(pFrame.img, toX(pFrame.x), toY(pFrame.y), toLen(50), toLen(50), pScale);
@@ -2372,7 +2392,7 @@ function drawSprites() {
     drawImageRotated(EFFECTS_LIB.fireTrail, t.x, t.y, toLen(30), toLen(30), t.rot);
   }
 
-  const batterFrames = batterFramesByChar[batterChar().key];
+  const batterFrames = getBatterFrames(batterChar().key);
   const bScale = app.batterBig ? BATTER_BIG_SCALE : 1;
   if (activeFrame > 0) {
     const f = batterFrames.swings[activeFrame - 1];
