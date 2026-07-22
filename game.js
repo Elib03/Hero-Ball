@@ -28,15 +28,21 @@ const toLen = lenY;
 // desktop keyboard/mouse UI - desktop behavior is untouched either way. The
 // ?mobile=1 / ?mobile=0 URL override exists purely for testing without real
 // touch hardware; real players always hit the detection below.
-// Touch-capability alone isn't relied on as the only signal - a user agent
-// check backs it up so a phone browser still gets the mobile UI even in a
-// state (e.g. Chrome iOS's "Request Desktop Website") where touch APIs may
-// not report the way a normal mobile visit does.
+// Deliberately NOT touch-capability based (navigator.maxTouchPoints /
+// 'ontouchstart' in window) - that was tried and reverted, because it's
+// unreliable in both directions: plenty of desktop/laptop screens report
+// touch support even though they're driven by mouse+keyboard (false
+// mobile), and a phone browser explicitly requesting the desktop site
+// (e.g. Chrome iOS's "Request Desktop Website") can suppress those same
+// signals (false desktop). A user-agent check for an actual mobile OS is
+// the standard, more reliable signal for "is this really a phone/tablet" -
+// and correctly still shows desktop when the browser is deliberately
+// pretending to be one, which is what that browser setting is for.
 const MOBILE_OVERRIDE = new URLSearchParams(location.search).get('mobile');
-const MOBILE_UA_RE = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i;
+const MOBILE_UA_RE = /Android|iPhone|iPad|iPod|Windows Phone/i;
 const IS_MOBILE = MOBILE_OVERRIDE !== null
   ? MOBILE_OVERRIDE === '1'
-  : ('ontouchstart' in window || navigator.maxTouchPoints > 0 || MOBILE_UA_RE.test(navigator.userAgent));
+  : MOBILE_UA_RE.test(navigator.userAgent);
 
 const ICONS = 'assets/icons/';
 const PORTRAITS = 'assets/portraits/';
