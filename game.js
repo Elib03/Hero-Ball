@@ -321,7 +321,37 @@ const SOUNDS = {
   strike: loadSound('strike.mp3'),
   ball: loadSound('ball.mp3'),
   out: loadSound('out.mp3'),
+  crowdCheer: loadSound('crowd_cheer.mp3', 0.7),
 };
+
+// One sound per power, keyed by the same CHARACTERS[].bat.key/pitch.key
+// strings the M/Z-key handlers already switch on below - sourced to
+// thematically match each power (e.g. a clock for Time Stop, a slot-machine
+// wheel for both of Gambler's Roll variants, a balloon inflating/deflating
+// for Ball Expand/Shrink).
+const POWER_SOUNDS = {
+  fire: loadSound('power_fire.mp3'),
+  meteor: loadSound('power_meteor.mp3'),
+  mirrorBall: loadSound('power_mirror_ball.mp3'),
+  ghost: loadSound('power_ghost_ball.mp3'),
+  timeStop: loadSound('power_time_stop.mp3'),
+  droneBall: loadSound('power_drone_ball.mp3'),
+  blackoutSwing: loadSound('power_blackout_swing.mp3'),
+  void: loadSound('power_void.mp3'),
+  gamblerBatting: loadSound('power_gamblers_roll.mp3'),
+  gamblerPitching: loadSound('power_gamblers_roll.mp3'),
+  pause: loadSound('power_pause_power.mp3'),
+  spinCycle: loadSound('power_spin_cycle.mp3'),
+  expandShot: loadSound('power_ball_expand.mp3'),
+  ballShrink: loadSound('power_ball_shrink.mp3'),
+  iceShield: loadSound('power_ice_shield.mp3'),
+  iceBall: loadSound('power_ice_ball.mp3'),
+  futureSight: loadSound('power_future_sight.mp3'),
+  mirage: loadSound('power_mirage.mp3'),
+  guaranteedContact: loadSound('power_guaranteed_contact.mp3'),
+  fastballPlus: loadSound('power_fastball_plus.mp3'),
+};
+
 function playSound(audio) {
   audio.currentTime = 0;
   audio.play().catch(() => {});
@@ -1458,6 +1488,7 @@ function handleGameplayKey(key) {
   if (key === 'm' && humanBatting && app.batPowerFull && !app.diceRolling) {
     const power = batterChar().bat.key;
     app.batPowerFull = false;
+    playSound(POWER_SOUNDS[power]);
     // Fire: the whole crosshair becomes a "critical crosshair" - any contact at
     // all is a Home Run while it's active. Persists until contact or inning change.
     if (power === 'fire') { app.batFireVisible = true; }
@@ -1482,6 +1513,7 @@ function handleGameplayKey(key) {
   if (key === 'z' && humanPitching && app.pitchPowerFull && canStartPitch() && !ghostBalls[0].visible) {
     const power = pitcherChar().pitch.key;
     app.pitchPowerFull = false;
+    playSound(POWER_SOUNDS[power]);
     // Void/Ghost/Meteor/SpinCycle/DroneBall/FastballPlus/Mirage/GamblerPitching all
     // launch or play out their own in-flight sequence, so powerUpActive blocks a
     // second pitch from being thrown mid-effect. Ball Shrink and Ice Ball are just
@@ -2785,7 +2817,13 @@ function resolveHit() {
   // app.paused alone here instead (it's already false in the normal,
   // never-armed case) - if it was true and didn't fire this swing, it stays
   // armed and gets another chance on the batter's next swing.
-  if (critHit || fireHit || normalHit) playSound(SOUNDS.batCrack);
+  if (critHit || fireHit || normalHit) {
+    playSound(SOUNDS.batCrack);
+    // The crowd doesn't just get louder on contact (that already happens on
+    // every swing, hit or miss - see attemptSwing()) - it erupts into an
+    // actual cheer layered on top of the ambient loop.
+    playSound(SOUNDS.crowdCheer);
+  }
   if (critHit || fireHit) {
     ball.accel = -toLen(0.2);
     ball.xSpeed = -lenX(40);
@@ -2894,6 +2932,7 @@ function stepPauseAnim() {
   // Every Pause outcome here is contact - even 'miss' got forgiven into a
   // Single rather than a whiff (see the outcome tiers below).
   playSound(SOUNDS.batCrack);
+  playSound(SOUNDS.crowdCheer);
   if (app.pauseOutcome === 'critical') {
     app.homeRun = true;
     app.goldenHomeRun = true;
