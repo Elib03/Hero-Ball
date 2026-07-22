@@ -370,6 +370,11 @@ const app = {
   // early-returns while this is true (see below), freezing the ball/CPU/
   // every animation exactly like the Pause power-up's own freeze does.
   showQuitConfirm: false,
+  // 0 = Yes/Leave, 1 = No/Stay - which button the arrow cursor points at
+  // (same up/down-arrow-cursor pattern as modeSelectIndex on the mode-select
+  // screen). Defaults to No every time the dialog opens, so an accidental
+  // Enter press is the safer "stay" outcome, not "leave".
+  quitConfirmIndex: 1,
 
   homePitching: true, // true: home team pitching (WASD), away batting. false: reversed (arrows)
   activePitcherKey: null, // which player is pitching right now: 'p1' | 'p2' | 'cpu'
@@ -385,6 +390,10 @@ const app = {
 
   pitch: '',
   checkHit: false,
+  // How many more ticks resolveHit() will keep checking for contact before
+  // giving up on this swing as a genuine miss - see attemptSwing() (where
+  // this starts) and resolveHit() (where it counts down).
+  swingContactTicksLeft: 0,
   swung: false,
   cpuSwung: false,
   homeRun: false,
@@ -912,6 +921,16 @@ function recordBaseHit() {
 function recordOut() {
   showCallBanner('Out');
   playSound(SOUNDS.out);
+  // Every out ends that batter's plate appearance, including a Ground Out
+  // reached via contact (see the ball.y >= toY(300) ground-bounce check in
+  // update(), which calls recordOut() directly) - Future Sight must clear
+  // here unconditionally rather than only on the 3rd/inning-ending out
+  // clearPowerupVisuals() below already handles, otherwise a 1st/2nd-out
+  // Ground Out would leave it armed for the next batter's first pitch for
+  // free. The other "persists through a strike" powers (Guaranteed Contact,
+  // Blackout Swing, etc.) are deliberately left alone here - only Future
+  // Sight is meant to be one-pitch-only.
+  app.showFutureSight = false;
   for (let i = 0; i < 3; i++) {
     if (outFills[i] === 'dimgray') { outFills[i] = 'gold'; return; }
     if (i === 1) {
@@ -940,10 +959,13 @@ function switchSides() {
         showCallBanner('Extra Innings');
         app.batPowerFull = false; app.pitchPowerFull = false;
       } else {
-        setTimeout(() => alert(homeScore > awayScore ? 'The Game Is Over: P1 WINS!' : 'The Game Is Over: P2 WINS!'), 50);
-        inningNumber = 1;
-        inningSuffix = 'st';
-        homeScore = 0; awayScore = 0;
+        // Capture the winner before goToCharacterSelectAfterGameOver() resets
+        // homeScore/awayScore back to 0 - the alert (deliberately delayed via
+        // setTimeout so it doesn't block this tick) would otherwise read the
+        // already-reset scores by the time it actually fires.
+        const p1Wins = homeScore > awayScore;
+        setTimeout(() => alert(p1Wins ? 'The Game Is Over: P1 WINS!' : 'The Game Is Over: P2 WINS!'), 50);
+        goToCharacterSelectAfterGameOver();
       }
     }
   }
@@ -965,8 +987,15 @@ function recordStrike() {
   if (app.voidActive) { ball.visible = true; app.voidActive = false; }
   app.timeStopActive = false;
   app.meteorActive = false;
-  // Crosshair state (Guaranteed Contact/Blackout Swing/Expand/Fire) deliberately
-  // persists through a called strike - it only clears on contact or inning change.
+  // Future Sight is a one-pitch preview, unlike Guaranteed Contact/Blackout
+  // Swing/Expand/Fire (which deliberately persist through a called strike
+  // below) - it must go away the instant THIS pitch is done, whether that's
+  // a strike or (see recordBall()) a ball. Mirage/Mirror Ball's own internal
+  // resetBall() cycling never routes through recordStrike()/recordBall()
+  // mid-sequence (see stepMirage()/the reverseBall branch in update()), so
+  // this only fires once the pitch has genuinely concluded, not on every
+  // one of their same-pitch fake sub-cycles.
+  app.showFutureSight = false;
   for (let i = 0; i < 3; i++) {
     if (strikeFills[i] === 'dimgray') { strikeFills[i] = 'gold'; return; }
     if (i === 1) { clearCounts(false); recordOut(); return; }
@@ -986,6 +1015,7 @@ function recordBall() {
   showCallBanner('Ball');
   playSound(SOUNDS.ball);
   if (app.voidActive) { ball.visible = true; app.voidActive = false; }
+  app.showFutureSight = false; // one-pitch preview - see recordStrike()'s comment
   for (let i = 0; i < 4; i++) {
     if (ballFills[i] === 'dimgray') { ballFills[i] = 'gold'; return; }
     if (i === 2) { forceWalk(); return; }
@@ -1184,18 +1214,12 @@ function goBackToModeSelect() {
   app.readyOpacity = 0;
 }
 
-// Answering "yes" on the Escape quit confirmation. There was previously no
-// way back to the mode-select screen from an in-progress game, so a match's
-// score/inning/counts/every powerup flag just lived for the rest of the page
-// session - starting a second game after leaving one early would otherwise
-// resume mid-inning with the old score still showing. Resets the same
-// score/inning fields switchSides() already resets on a legitimate game-over
-// (see its extra-innings branch), plus every other piece of at-bat state via
-// the same helpers a normal play already uses between pitches.
-function quitToModeSelect() {
-  app.showQuitConfirm = false;
-  goBackToModeSelect();
-
+// Shared by quitToModeSelect() (answering "yes" on the Escape quit
+// confirmation) and goToCharacterSelectAfterGameOver() (a match actually
+// finishing) - both need every piece of match/at-bat state wiped so the
+// next game starts clean instead of resuming mid-inning with the old score,
+// via the same helpers a normal play already uses between pitches.
+function resetMatchState() {
   homeScore = 0; awayScore = 0;
   inningNumber = 1; inningSuffix = 'st';
   bases[0] = bases[1] = bases[2] = 'grey';
@@ -1216,6 +1240,25 @@ function quitToModeSelect() {
   app.batPowerFull = true;
   app.pitchPowerFull = true;
   crowdSound.pause();
+}
+
+function quitToModeSelect() {
+  app.showQuitConfirm = false;
+  goBackToModeSelect();
+  resetMatchState();
+}
+
+// A match actually finishing (see switchSides()' game-over branch) goes
+// straight back to character select instead of all the way to mode-select -
+// same mode (solo/versus), just pick characters again for the rematch.
+function goToCharacterSelectAfterGameOver() {
+  app.screen = IS_MOBILE ? 'mobileCharacterSelect' : (app.mode === 'versus' ? 'characterVersus' : 'characterSolo');
+  app.player1Locked = false;
+  app.player2Locked = false;
+  app.difficultyLocked = false;
+  app.readyOpacity = 0;
+  randomizeCharacterCursor(app.mode);
+  resetMatchState();
 }
 
 function handleSoloSelectKey(key) {
@@ -1298,11 +1341,16 @@ function handleGameplayKey(key) {
   // else (swinging, pitching, fire tune mode, ...) should react to a
   // keypress meant to answer the dialog.
   if (app.showQuitConfirm) {
-    if (key === 'enter' || key === 'y') quitToModeSelect();
+    // Same up/down-arrow-cursor navigation as the mode-select screen -
+    // Enter confirms whichever button quitConfirmIndex currently points at.
+    // Y/N remain direct shortcuts that don't need the cursor moved first.
+    if (key === 'arrowup' || key === 'arrowdown') { app.quitConfirmIndex = app.quitConfirmIndex === 0 ? 1 : 0; return; }
+    if (key === 'enter') { if (app.quitConfirmIndex === 0) quitToModeSelect(); else app.showQuitConfirm = false; return; }
+    if (key === 'y') quitToModeSelect();
     else if (key === 'escape' || key === 'n') app.showQuitConfirm = false;
     return;
   }
-  if (key === 'escape') { app.showQuitConfirm = true; return; }
+  if (key === 'escape') { app.showQuitConfirm = true; app.quitConfirmIndex = 1; return; }
 
   // Fire Trail Tune Mode: a debug tool for dialing in the Fire power-up's
   // flame alignment by eye, across all 6 batter sprites. Press F to toggle;
@@ -1457,10 +1505,17 @@ canvas.addEventListener('mousemove', e => {
 // quick presses) produced two swings/resolutions for what should be one.
 // Once a swing is in progress, ignore further attempts until it finishes.
 // Shared by the desktop click-to-swing handler and the mobile Swing button.
+// A mistimed swing gets this many extra ticks of contact-checking (see
+// resolveHit()) before it's judged a genuine miss, instead of only the
+// single instant the swing was thrown on - the ball keeps moving each of
+// those ticks, so a slightly early/late swing still has a chance to connect.
+const SWING_CONTACT_WINDOW = 4;
+
 function attemptSwing() {
   if (app.isBatting) return;
   app.isBatting = true;
   app.checkHit = true;
+  app.swingContactTicksLeft = SWING_CONTACT_WINDOW;
   app.swung = true;
   // Crowd gets loud right on the swing itself (hit or miss) - stepCrowdVolume()
   // (called every tick from update()) eases it back down toward the
@@ -2076,7 +2131,7 @@ function drawPitchPathIcon(x, y, w, h, type) {
 // its logic - every guard (canStartPitch(), power-already-used, dice-in-
 // progress, etc.) already lives there and applies automatically this way.
 function handleMobilePlayTap(x, y) {
-  if (pointInBackButton(x, y, BACK_BUTTON_INGAME)) { app.showQuitConfirm = true; return; }
+  if (pointInBackButton(x, y, BACK_BUTTON_INGAME)) { app.showQuitConfirm = true; app.quitConfirmIndex = 1; return; }
 
   if (app.activeBatterKey !== 'cpu') {
     if (pointInSwingButton(x, y)) { attemptSwing(); return; }
@@ -2409,6 +2464,12 @@ function drawQuitConfirm() {
   const noX = px + (pw - QUIT_NO_BTN.w) / 2, noY = py + QUIT_NO_BTN.offsetY;
   rect(noX, noY, QUIT_NO_BTN.w, QUIT_NO_BTN.h, 'rgba(30,150,30,0.85)', 1, 'white', 2);
   text('No, Stay', noX + QUIT_NO_BTN.w / 2, noY + QUIT_NO_BTN.h / 2, 20, 'white', 1, 'center', 900);
+
+  // Cursor: a pointer arrow beside whichever button quitConfirmIndex
+  // currently points at - same pattern as drawModeSelect()'s own '▶'.
+  const cursorX = app.quitConfirmIndex === 0 ? yesX : noX;
+  const cursorY = app.quitConfirmIndex === 0 ? yesY + QUIT_YES_BTN.h / 2 : noY + QUIT_NO_BTN.h / 2;
+  text('▶', cursorX - 15, cursorY, 22, 'white', 1, 'right', 900);
 }
 
 function drawGameplay() {
@@ -2586,6 +2647,20 @@ function resolveHit() {
   const critHit = !critHidden && d <= criticalRadius;
   const normalHit = d <= crosshairRadius;
   const fireHit = app.batFireVisible && normalHit;
+
+  // A mistimed swing gets a few more ticks to actually connect (see
+  // SWING_CONTACT_WINDOW/attemptSwing()) instead of being judged a miss from
+  // this single instant - the ball keeps moving each of those ticks, so
+  // checking again next tick gives a slightly early/late swing a real chance.
+  // Skipped when Pause is about to consume the swing outright regardless of
+  // precision (its own branch just below always resolves in one tick, same
+  // as before this window existed).
+  if (!(critHit || fireHit || normalHit) && !(app.paused && ball.x <= toX(355))) {
+    app.swingContactTicksLeft--;
+    if (app.swingContactTicksLeft > 0) return;
+    app.checkHit = false; // window used up with no contact - genuine miss
+    return;
+  }
 
   // Bug fix: if the ball has already crossed the plate threshold (ball.x >
   // toX(355)) by the time the swing lands, it's too late to meaningfully
