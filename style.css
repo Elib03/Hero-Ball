@@ -1,3 +1,29 @@
+/* Self-hosted (Poki blocks external requests like fonts.googleapis.com) -
+   one variable-weight woff2 file; each @font-face just points the browser
+   at the weight it should pull from that file's own weight axis, same as
+   Google's own css2 API response for this font did. */
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('assets/fonts/orbitron.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('assets/fonts/orbitron.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url('assets/fonts/orbitron.woff2') format('woff2');
+}
+
 * { box-sizing: border-box; }
 
 html, body {
