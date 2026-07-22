@@ -457,7 +457,10 @@ let crosshairStyle = 'normal'; // normal | blackout
 // tapping another button doesn't steal or reset it. stepCrosshair() reads
 // dx/dy every tick to move the crosshair while touchId isn't null.
 const joystick = { touchId: null, dx: 0, dy: 0 };
-const JOYSTICK_BASE = { x: 45, y: 370, radius: 35 }; // 0-400 unit space, bottom-left
+// 0-400 unit space, left side - y sits in the upper half of the grass
+// (grass runs y:300-400, see drawField()), matching SWING_BUTTON/
+// POWERUP_BUTTON's row so all three batting controls line up together.
+const JOYSTICK_BASE = { x: 45, y: 328, radius: 35 };
 
 function resetBall() {
   ball.x = toX(61);
@@ -1871,8 +1874,11 @@ function drawPowerUpUi() {
 // is CPU) - drawMobileControls() picks the matching layout the same way
 // drawPitchMenu()/drawPowerUpUi() already do (activePitcherKey/activeBatterKey
 // !== 'cpu'), so the two layouts never need to coexist.
-const SWING_BUTTON = { x: 325, y: 335, size: 55 };
-const POWERUP_BUTTON = { x: 173, y: 342, size: 55 }; // batting layout: bottom-center, between joystick and swing
+// Bigger than before (55 -> 70), and moved up alongside the joystick/
+// power-up circle into the upper half of the grass (y:300-400) instead of
+// sitting near the bottom - all three share the same row center (y=328).
+const SWING_BUTTON = { x: 315, y: 293, size: 70 };
+const POWERUP_BUTTON = { x: 173, y: 300, size: 55 }; // batting layout: bottom-center, between joystick and swing
 // Pitching layout: same circular design as the batting one, sitting right
 // under the pitcher (PITCHER_FRAME_META centers around x~26-37 -> roughly
 // x:26-58 unit-wise once the sprite box is accounted for, feet at y~300).
