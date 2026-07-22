@@ -303,6 +303,47 @@ CHARACTERS.forEach(c => {
 
 const homeRunSound = document.getElementById('homeRunSound');
 
+/* ============================== AUDIO ============================== */
+const AUDIO_DIR = 'assets/audio/';
+function loadSound(src, volume) {
+  const audio = new Audio(AUDIO_DIR + src);
+  audio.preload = 'auto';
+  audio.volume = volume === undefined ? 1 : volume;
+  return audio;
+}
+// One-shot call sounds - restart from 0 every play (same pattern as
+// homeRunSound above) so a quick repeat retriggers instead of being a no-op
+// on an already-playing clip.
+const SOUNDS = {
+  batCrack: loadSound('bat_crack.mp3'),
+  single: loadSound('single.mp3'),
+  double: loadSound('double.mp3'),
+  strike: loadSound('strike.mp3'),
+  ball: loadSound('ball.mp3'),
+  out: loadSound('out.mp3'),
+};
+function playSound(audio) {
+  audio.currentTime = 0;
+  audio.play().catch(() => {});
+}
+
+// Background stadium ambience: loops continuously through a game, ducked to
+// a quiet baseline most of the time and briefly boosted louder right after
+// every swing (see attemptSwing()), then eased back down tick by tick (see
+// stepCrowdVolume(), called from update()) instead of snapping back.
+const CROWD_BASE_VOLUME = 0.15;
+const CROWD_SWING_VOLUME = 0.6;
+const CROWD_DECAY_PER_TICK = 0.01;
+const crowdSound = loadSound('crowd_loop.mp3', CROWD_BASE_VOLUME);
+crowdSound.loop = true;
+let crowdVolume = CROWD_BASE_VOLUME;
+
+function stepCrowdVolume() {
+  if (crowdVolume <= CROWD_BASE_VOLUME) return;
+  crowdVolume = Math.max(CROWD_BASE_VOLUME, crowdVolume - CROWD_DECAY_PER_TICK);
+  crowdSound.volume = crowdVolume;
+}
+
 /* ============================== CANVAS ============================== */
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -852,12 +893,14 @@ function recordBaseHit() {
     }
   } else if ((ball.xSpeed + ball.ySpeed) < -lenX(25)) {
     showCallBanner('Double');
+    playSound(SOUNDS.double);
     if (bases[1] === 'gold') { bases[1] = 'grey'; scoreRun(); }
     if (bases[2] === 'gold') { bases[2] = 'grey'; scoreRun(); }
     if (bases[0] === 'gold') { bases[0] = 'grey'; bases[2] = 'gold'; }
     bases[1] = 'gold';
   } else {
     showCallBanner('Single');
+    playSound(SOUNDS.single);
     for (let i = 0; i < 3; i++) {
       if (bases[i] === 'grey') { bases[i] = 'gold'; resetBall(); return; }
       if (i === 2) scoreRun();
@@ -868,6 +911,7 @@ function recordBaseHit() {
 
 function recordOut() {
   showCallBanner('Out');
+  playSound(SOUNDS.out);
   for (let i = 0; i < 3; i++) {
     if (outFills[i] === 'dimgray') { outFills[i] = 'gold'; return; }
     if (i === 1) {
@@ -917,6 +961,7 @@ function assignActiveRoles() {
 
 function recordStrike() {
   showCallBanner('Strike');
+  playSound(SOUNDS.strike);
   if (app.voidActive) { ball.visible = true; app.voidActive = false; }
   app.timeStopActive = false;
   app.meteorActive = false;
@@ -939,6 +984,7 @@ function forceWalk() {
 
 function recordBall() {
   showCallBanner('Ball');
+  playSound(SOUNDS.ball);
   if (app.voidActive) { ball.visible = true; app.voidActive = false; }
   for (let i = 0; i < 4; i++) {
     if (ballFills[i] === 'dimgray') { ballFills[i] = 'gold'; return; }
@@ -1169,6 +1215,7 @@ function quitToModeSelect() {
   app.fireTuneActive = false;
   app.batPowerFull = true;
   app.pitchPowerFull = true;
+  crowdSound.pause();
 }
 
 function handleSoloSelectKey(key) {
@@ -1228,6 +1275,13 @@ function beginGame() {
   assignActiveRoles();
   if (app.mode === 'solo') app.cpuBatterIndex = randRange(0, CHARACTERS.length);
   resetBall();
+  // beginGame() only ever runs after the player has already interacted with
+  // the menu (clicked/tapped Play, pressed Enter, etc.), so the browser's
+  // autoplay-needs-a-user-gesture policy is already satisfied here.
+  crowdVolume = CROWD_BASE_VOLUME;
+  crowdSound.volume = CROWD_BASE_VOLUME;
+  crowdSound.currentTime = 0;
+  crowdSound.play().catch(() => {});
 }
 
 /* ============================== INPUT: GAMEPLAY ============================== */
@@ -1408,6 +1462,11 @@ function attemptSwing() {
   app.isBatting = true;
   app.checkHit = true;
   app.swung = true;
+  // Crowd gets loud right on the swing itself (hit or miss) - stepCrowdVolume()
+  // (called every tick from update()) eases it back down toward the
+  // baseline afterward instead of cutting back instantly.
+  crowdVolume = CROWD_SWING_VOLUME;
+  crowdSound.volume = crowdVolume;
 }
 
 // Shared by the mouse and touch input paths (see the touchstart listener
@@ -2588,6 +2647,7 @@ function resolveHit() {
   // app.paused alone here instead (it's already false in the normal,
   // never-armed case) - if it was true and didn't fire this swing, it stays
   // armed and gets another chance on the batter's next swing.
+  if (critHit || fireHit || normalHit) playSound(SOUNDS.batCrack);
   if (critHit || fireHit) {
     ball.accel = -toLen(0.2);
     ball.xSpeed = -lenX(40);
@@ -2693,6 +2753,9 @@ function stepPauseAnim() {
   app.justFinishedPauseAnim = true;
   ball.accel = -toLen(0.2);
   app.pitch = '';
+  // Every Pause outcome here is contact - even 'miss' got forgiven into a
+  // Single rather than a whiff (see the outcome tiers below).
+  playSound(SOUNDS.batCrack);
   if (app.pauseOutcome === 'critical') {
     app.homeRun = true;
     app.goldenHomeRun = true;
@@ -3038,6 +3101,7 @@ function stepCrosshair() {
 
 function update() {
   if (app.screen !== 'play') return;
+  stepCrowdVolume();
 
   // Escape-to-quit confirmation is up - freeze the entire scene (ball, CPU,
   // any in-flight animation) exactly where it is until the player answers.
