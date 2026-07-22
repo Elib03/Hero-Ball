@@ -31,7 +31,7 @@ const EFFECTS_LIB = {
   ],
   meteorProjectile: loadEffectImage(EFFECTS_DIR + 'meteor_projectile.png'),
   droneBallProjectile: loadEffectImage(EFFECTS_DIR + 'drone_ball.png'),
-  ballTrail: loadEffectImage('https://external-violet-sjymzv3rzs.edgeone.app/Untitled%20design.png'),
+  ballTrail: loadEffectImage(EFFECTS_DIR + 'ball_trail.png'),
   fastballPlusTrail: loadEffectImage(EFFECTS_DIR + 'fastball_plus_trail.png'),
   fireTrail: loadEffectImage(EFFECTS_DIR + 'fire_trail.png'),
   // Translucent overlay drawn on top of the batter while Ice Ball is active.
