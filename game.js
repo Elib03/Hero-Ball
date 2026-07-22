@@ -344,6 +344,26 @@ function stepCrowdVolume() {
   crowdSound.volume = crowdVolume;
 }
 
+// Background music ("Feel Alive" by Michael Ramir C., via Mixkit) - loops
+// continuously for the whole session at normal volume on every menu-ish
+// screen, ducked down faint during actual gameplay (see render(), which
+// re-checks app.screen every frame and adjusts the volume accordingly - far
+// simpler than hooking every individual screen-transition function).
+const MUSIC_MENU_VOLUME = 0.5;
+const MUSIC_GAME_VOLUME = 0.08;
+const musicSound = loadSound('feel_alive.mp3', MUSIC_MENU_VOLUME);
+musicSound.loop = true;
+let musicStarted = false;
+// Browsers block audio autoplay without a user gesture, so this can't just
+// run on page load - call it from the first real keydown/mousedown/
+// touchstart the page receives (see those listeners below), whichever
+// happens first.
+function ensureMusicStarted() {
+  if (musicStarted) return;
+  musicStarted = true;
+  musicSound.play().catch(() => { musicStarted = false; });
+}
+
 /* ============================== CANVAS ============================== */
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -375,6 +395,10 @@ const app = {
   // screen). Defaults to No every time the dialog opens, so an accidental
   // Enter press is the safer "stay" outcome, not "leave".
   quitConfirmIndex: 1,
+
+  // Set right before app.screen becomes 'gameOver' (see switchSides()'
+  // game-over branch) - which winner line drawGameOver() shows.
+  gameOverP1Wins: false,
 
   homePitching: true, // true: home team pitching (WASD), away batting. false: reversed (arrows)
   activePitcherKey: null, // which player is pitching right now: 'p1' | 'p2' | 'cpu'
@@ -937,7 +961,9 @@ function recordOut() {
       bases[0] = bases[1] = bases[2] = 'grey';
       showCallBanner('Switch Sides!');
       clearCounts(true);
-      if (inningNumber < 4) { app.batPowerFull = true; app.pitchPowerFull = true; }
+      // Refills every half-inning regardless of inning number - power-ups
+      // stay available through extra innings too, not just innings 1-3.
+      app.batPowerFull = true; app.pitchPowerFull = true;
       clearPowerupVisuals();
       switchSides();
       return;
@@ -957,15 +983,14 @@ function switchSides() {
       if (homeScore === awayScore) {
         inningSuffix = 'th';
         showCallBanner('Extra Innings');
-        app.batPowerFull = false; app.pitchPowerFull = false;
       } else {
-        // Capture the winner before goToCharacterSelectAfterGameOver() resets
-        // homeScore/awayScore back to 0 - the alert (deliberately delayed via
-        // setTimeout so it doesn't block this tick) would otherwise read the
-        // already-reset scores by the time it actually fires.
-        const p1Wins = homeScore > awayScore;
-        setTimeout(() => alert(p1Wins ? 'The Game Is Over: P1 WINS!' : 'The Game Is Over: P2 WINS!'), 50);
-        goToCharacterSelectAfterGameOver();
+        // Show the custom Game Over screen instead of a blocking alert() -
+        // capture the winner now, before the player presses "Back To Menu"
+        // (see handlePointerDown()/the keydown dispatcher's 'gameOver' case)
+        // triggers goToCharacterSelectAfterGameOver(), which resets
+        // homeScore/awayScore back to 0.
+        app.gameOverP1Wins = homeScore > awayScore;
+        app.screen = 'gameOver';
       }
     }
   }
@@ -1172,6 +1197,7 @@ function cpuPitch() {
 
 /* ============================== INPUT: MENUS ============================== */
 window.addEventListener('keydown', e => {
+  ensureMusicStarted();
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
   if (app.screen === 'mode') { handleModeSelectKey(key); return; }
 
@@ -1181,6 +1207,10 @@ window.addEventListener('keydown', e => {
   }
   if (app.screen === 'characterVersus') {
     handleVersusSelectKey(key);
+    return;
+  }
+  if (app.screen === 'gameOver') {
+    if (key === 'enter') goToCharacterSelectAfterGameOver();
     return;
   }
   if (app.screen === 'play') {
@@ -1536,6 +1566,10 @@ function handlePointerDown(x, y) {
   }
   if (app.screen === 'mobileCharacterSelect') { handleMobileCharacterSelectTap(x, y); return; }
   if (app.screen === 'mobileDifficultySelect') { handleMobileDifficultySelectTap(x, y); return; }
+  if (app.screen === 'gameOver') {
+    if (pointInGameOverButton(x, y)) goToCharacterSelectAfterGameOver();
+    return;
+  }
   if (app.screen !== 'play') return;
   if (app.showQuitConfirm) {
     if (pointInQuitYesButton(x, y)) quitToModeSelect();
@@ -1547,7 +1581,7 @@ function handlePointerDown(x, y) {
   if (x > toX(250)) attemptSwing();
 }
 
-canvas.addEventListener('mousedown', e => handlePointerDown(mouseX, mouseY));
+canvas.addEventListener('mousedown', e => { ensureMusicStarted(); handlePointerDown(mouseX, mouseY); });
 
 function touchToCanvasXY(touch) {
   const r = canvas.getBoundingClientRect();
@@ -1576,6 +1610,7 @@ function updateJoystickDeflection(x, y) {
 // mashing buttons during play.
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
+  ensureMusicStarted();
   for (const touch of e.changedTouches) {
     const { x, y } = touchToCanvasXY(touch);
     // Only the batting layout has a joystick at all (drawMobileControls) -
@@ -2472,6 +2507,32 @@ function drawQuitConfirm() {
   text('▶', cursorX - 15, cursorY, 22, 'white', 1, 'right', 900);
 }
 
+// A full standalone screen (not an overlay on top of 'play', unlike
+// drawQuitConfirm() - the match is genuinely over by the time this shows,
+// see switchSides()' game-over branch) - stays up until the player presses
+// the button, instead of auto-navigating away or blocking on a native
+// alert(). Raw canvas pixels throughout, same reasoning as
+// QUIT_PANEL/quitPanelRect().
+const GAME_OVER_BTN = { w: 260, h: 65 };
+function gameOverButtonRect() {
+  return { bx: CANVAS_W / 2 - GAME_OVER_BTN.w / 2, by: CANVAS_H / 2 + 50, bw: GAME_OVER_BTN.w, bh: GAME_OVER_BTN.h };
+}
+function pointInGameOverButton(x, y) {
+  const { bx, by, bw, bh } = gameOverButtonRect();
+  return x >= bx && x <= bx + bw && y >= by && y <= by + bh;
+}
+function drawGameOver() {
+  drawStadium();
+  rect(0, 0, CANVAS_W, CANVAS_H, 'black', 0.6);
+
+  text('GAME OVER', CANVAS_W / 2, CANVAS_H / 2 - 90, 46, 'white', 1, 'center', 900);
+  text(app.gameOverP1Wins ? 'P1 WINS!' : 'P2 WINS!', CANVAS_W / 2, CANVAS_H / 2 - 30, 30, 'gold', 1, 'center', 900);
+
+  const { bx, by, bw, bh } = gameOverButtonRect();
+  rect(bx, by, bw, bh, 'rgba(210,30,30,0.85)', 1, 'white', 2);
+  text('Back To Menu', CANVAS_W / 2, by + bh / 2, 20, 'white', 1, 'center', 900);
+}
+
 function drawGameplay() {
   drawField();
   drawScoreboard();
@@ -2590,6 +2651,7 @@ function drawPauseAnim() {
 }
 
 function render() {
+  musicSound.volume = app.screen === 'play' ? MUSIC_GAME_VOLUME : MUSIC_MENU_VOLUME;
   ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
   if (app.screen === 'mode') drawModeSelect();
   else if (app.screen === 'characterSolo') drawSoloSelect();
@@ -2597,6 +2659,7 @@ function render() {
   else if (app.screen === 'mobileCharacterSelect') drawMobileCharacterSelect();
   else if (app.screen === 'mobileDifficultySelect') drawMobileDifficultySelect();
   else if (app.screen === 'play') drawGameplay();
+  else if (app.screen === 'gameOver') drawGameOver();
 }
 
 /* ============================== HIT RESOLUTION ============================== */
