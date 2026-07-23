@@ -1432,6 +1432,23 @@ function quitToModeSelect() {
   resetMatchState();
 }
 
+// The quit-confirm modal freezes the entire scene while it's up (see
+// update()'s early return) - that's exactly Poki's own "pause" example for
+// gameplayStop()/gameplayStart(), so opening/backing out of it needs the
+// same events as an actual pause menu would. Actually confirming the quit
+// (quitToModeSelect(), above) already leaves the play screen entirely, so
+// there's no matching "resume" for that path - only backing out without
+// quitting counts as an unpause.
+function openQuitConfirm() {
+  app.showQuitConfirm = true;
+  app.quitConfirmIndex = 1;
+  pokiGameplayStop();
+}
+function closeQuitConfirmAndResume() {
+  app.showQuitConfirm = false;
+  pokiGameplayStart();
+}
+
 // A match actually finishing (see switchSides()' game-over branch) goes
 // straight back to character select instead of all the way to mode-select -
 // same mode (solo/versus), just pick characters again for the rematch.
@@ -1548,12 +1565,12 @@ function handleGameplayKey(key) {
     // Enter confirms whichever button quitConfirmIndex currently points at.
     // Y/N remain direct shortcuts that don't need the cursor moved first.
     if (key === 'arrowup' || key === 'arrowdown') { app.quitConfirmIndex = app.quitConfirmIndex === 0 ? 1 : 0; return; }
-    if (key === 'enter') { if (app.quitConfirmIndex === 0) quitToModeSelect(); else app.showQuitConfirm = false; return; }
+    if (key === 'enter') { if (app.quitConfirmIndex === 0) quitToModeSelect(); else closeQuitConfirmAndResume(); return; }
     if (key === 'y') quitToModeSelect();
-    else if (key === 'escape' || key === 'n') app.showQuitConfirm = false;
+    else if (key === 'escape' || key === 'n') closeQuitConfirmAndResume();
     return;
   }
-  if (key === 'escape') { app.showQuitConfirm = true; app.quitConfirmIndex = 1; return; }
+  if (key === 'escape') { openQuitConfirm(); return; }
 
   // Fire Trail Tune Mode: a debug tool for dialing in the Fire power-up's
   // flame alignment by eye, across all 6 batter sprites. Press F to toggle;
@@ -1757,7 +1774,7 @@ function handlePointerDown(x, y) {
   if (app.screen !== 'play') return;
   if (app.showQuitConfirm) {
     if (pointInQuitYesButton(x, y)) quitToModeSelect();
-    else if (pointInQuitNoButton(x, y)) app.showQuitConfirm = false;
+    else if (pointInQuitNoButton(x, y)) closeQuitConfirmAndResume();
     return;
   }
   if (IS_MOBILE) { handleMobilePlayTap(x, y); return; }
@@ -2350,7 +2367,7 @@ function drawPitchPathIcon(x, y, w, h, type) {
 // its logic - every guard (canStartPitch(), power-already-used, dice-in-
 // progress, etc.) already lives there and applies automatically this way.
 function handleMobilePlayTap(x, y) {
-  if (pointInBackButton(x, y, BACK_BUTTON_INGAME)) { app.showQuitConfirm = true; app.quitConfirmIndex = 1; return; }
+  if (pointInBackButton(x, y, BACK_BUTTON_INGAME)) { openQuitConfirm(); return; }
 
   if (app.activeBatterKey !== 'cpu') {
     if (pointInSwingButton(x, y)) { attemptSwing(); return; }
