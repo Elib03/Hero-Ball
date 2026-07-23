@@ -1380,6 +1380,14 @@ function cpuPitch() {
 const SCROLL_KEYS = new Set([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End']);
 window.addEventListener('keydown', e => {
   if (SCROLL_KEYS.has(e.key)) e.preventDefault();
+  // A commercialBreak() is pending (ad overlay up, or about to be) - the
+  // player is still sitting on whatever menu screen they were on
+  // underneath it, so without this every key here would keep driving that
+  // screen (cycling characters, re-confirming Play, ...) right through the
+  // ad. Freeze all input dispatch until the break resolves; preventDefault
+  // above still runs so a stray arrow/space press can't scroll the page
+  // either.
+  if (pokiBreakPending) return;
   ensureMusicStarted();
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
   if (app.screen === 'mode') { handleModeSelectKey(key); return; }
@@ -1792,6 +1800,7 @@ function attemptSwing() {
 // (used while testing with ?mobile=1, which has no real touch hardware)
 // dispatch through the exact same logic.
 function handlePointerDown(x, y) {
+  if (pokiBreakPending) return; // don't let a click/tap during an ad break reach whatever screen is underneath it
   if (app.screen === 'mode') { handleModeClick(x, y); return; }
   if (app.screen === 'characterSolo' || app.screen === 'characterVersus') {
     if (pointInBackButton(x, y)) goBackToModeSelect();
