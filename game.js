@@ -1371,7 +1371,15 @@ function cpuPitch() {
 }
 
 /* ============================== INPUT: MENUS ============================== */
+// Arrow keys and Space default to scrolling the page in every browser -
+// harmless on its own (html/body are overflow:hidden here), but Poki embeds
+// the game in an iframe on their own page, which is NOT overflow:hidden, so
+// an unprevented arrow/space press bubbles up and scrolls Poki's page
+// around the game instead. Arrow keys are the game's own pitching/menu
+// controls anyway; Space isn't used for anything but still needs blocking.
+const SCROLL_KEYS = new Set([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End']);
 window.addEventListener('keydown', e => {
+  if (SCROLL_KEYS.has(e.key)) e.preventDefault();
   ensureMusicStarted();
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
   if (app.screen === 'mode') { handleModeSelectKey(key); return; }
