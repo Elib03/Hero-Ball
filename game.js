@@ -98,9 +98,13 @@ const FULL_POWER_STOPS = ['red', 'orange', 'yellow', 'green', 'blue', 'purple'];
 // refresh. Stamp every local asset load with the current time so it's always
 // re-fetched fresh. Leave remote (http/https) URLs alone - they're static,
 // externally-hosted, and don't need this.
+// See effects.js's loadEffectImage() for what window.__pokiAssetsToTrack is for.
+window.__pokiAssetsToTrack = window.__pokiAssetsToTrack || [];
+
 function loadImage(src) {
   const img = new Image();
   img.src = /^https?:\/\//.test(src) ? src : src + (src.includes('?') ? '&' : '?') + 't=' + Date.now();
+  window.__pokiAssetsToTrack.push(img);
   return img;
 }
 
@@ -317,6 +321,7 @@ function getBatterFrames(key) {
 }
 
 const homeRunSound = document.getElementById('homeRunSound');
+window.__pokiAssetsToTrack.push(homeRunSound); // declared directly in index.html, not via loadSound()
 
 /* ============================== AUDIO ============================== */
 const AUDIO_DIR = 'assets/audio/';
@@ -324,6 +329,7 @@ function loadSound(src, volume) {
   const audio = new Audio(AUDIO_DIR + src);
   audio.preload = 'auto';
   audio.volume = volume === undefined ? 1 : volume;
+  window.__pokiAssetsToTrack.push(audio);
   return audio;
 }
 // One-shot call sounds - restart from 0 every play (same pattern as
@@ -429,12 +435,38 @@ function ensureMusicStarted() {
 // GitHub Pages, an ad blocker eating the script) - every call below is
 // guarded so a missing/failed PokiSDK never breaks actual gameplay.
 const pokiSdkAvailable = typeof PokiSDK !== 'undefined';
+
+// Resolves once every asset in the list has either loaded or errored out -
+// errors resolve too (rather than reject) so one broken/slow file can't
+// wedge the loading screen forever. A snapshot, not a live reference: only
+// the assets requested at parse time (icons/portraits/menu art/effects/
+// audio) should gate this - character sprites are fetched later, on demand,
+// once a match actually starts (see getPitcherFrames()/getBatterFrames()),
+// and must not hold up the initial loading signal.
+function waitForAssetsLoaded(assets) {
+  const pending = assets.map(a => new Promise(resolve => {
+    if (a instanceof HTMLImageElement) {
+      if (a.complete) { resolve(); return; }
+      a.addEventListener('load', resolve, { once: true });
+      a.addEventListener('error', resolve, { once: true });
+    } else { // HTMLAudioElement
+      if (a.readyState >= 3) { resolve(); return; } // HAVE_FUTURE_DATA or better
+      a.addEventListener('canplaythrough', resolve, { once: true });
+      a.addEventListener('error', resolve, { once: true });
+    }
+  }));
+  // Safety net: don't let the loading screen hang indefinitely if something
+  // never fires either event (shouldn't happen for same-origin assets, but
+  // this only ever costs an early gameLoadingFinished() if it's hit).
+  const timeout = new Promise(resolve => setTimeout(resolve, 15000));
+  return Promise.race([Promise.all(pending), timeout]);
+}
+
 if (pokiSdkAvailable) {
   PokiSDK.init().then(() => {
-    // Nothing here blocks on a loading screen - the game already renders
-    // progressively (menu shows immediately, images/audio populate as they
-    // arrive) - so "loading finished" is true the instant init resolves.
-    PokiSDK.gameLoadingFinished();
+    waitForAssetsLoaded(window.__pokiAssetsToTrack.slice()).then(() => {
+      PokiSDK.gameLoadingFinished();
+    });
   }).catch(() => {});
 }
 

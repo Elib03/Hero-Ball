@@ -12,12 +12,22 @@
 
 const EFFECTS_DIR = 'assets/effects/';
 
+// Every asset created here at parse time gets pushed onto this shared list
+// (game.js's loadImage()/loadSound() append to the same one) so
+// PokiSDK.gameLoadingFinished() can wait for the actual initial batch to
+// finish downloading instead of firing the instant the SDK itself is ready
+// - see game.js's POKI SDK section. Assets requested later on demand
+// (character sprites, fetched once a match actually starts) are never in
+// this array at the time that wait runs, so they don't hold it up.
+window.__pokiAssetsToTrack = window.__pokiAssetsToTrack || [];
+
 // Bug fix: same as game.js's loadImage() - local effect assets swapped by
 // hand on disk weren't showing up without a hard refresh since the browser
 // cached them by URL alone. Cache-bust local files; leave remote URLs as-is.
 function loadEffectImage(src) {
   const img = new Image();
   img.src = /^https?:\/\//.test(src) ? src : src + (src.includes('?') ? '&' : '?') + 't=' + Date.now();
+  window.__pokiAssetsToTrack.push(img);
   return img;
 }
 
