@@ -504,6 +504,30 @@ function pokiCommercialBreak(onDone) {
   });
 }
 
+// Safety net: every in-game path that ends a match (game over, quitting,
+// opening the quit-confirm pause) already calls pokiGameplayStop() itself -
+// but a player (or an automated test) can also just close the tab, switch
+// away, or navigate off mid-match without ever hitting one of those paths,
+// which would leave a gameplayStart() with no matching gameplayStop() ever
+// reported. document.hidden fires reliably for all of those cases (tab
+// close, tab switch, minimize, mobile app-switch), so it's the standard
+// catch-all rather than trying to enumerate every possible exit. Only
+// resumes automatically if this handler was the one that stopped it (not
+// stepping on the quit-confirm modal's own stop/resume) and the player's
+// actually still on the play screen when they come back.
+let pokiStoppedForHidden = false;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (pokiGameplayActive) {
+      pokiStoppedForHidden = true;
+      pokiGameplayStop();
+    }
+  } else if (pokiStoppedForHidden) {
+    pokiStoppedForHidden = false;
+    if (app.screen === 'play' && !app.showQuitConfirm) pokiGameplayStart();
+  }
+});
+
 /* ============================== CANVAS ============================== */
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
