@@ -581,15 +581,14 @@ const ctx = canvas.getContext('2d');
 
 /* ============================== GAME STATE ============================== */
 const app = {
-  screen: 'mode', // mode | characterSolo | characterVersus | mobileCharacterSelect | mobileDifficultySelect | play
-  // The 'mode' screen shows nothing but a "start tutorial" prompt + a Skip
-  // Tutorial button until this flips true (see drawModeSelect()) - a lot of
+  // Session starts directly in the tutorial (see the bottom of this file's
+  // startTutorial() call) rather than landing on 'mode' first - a lot of
   // players were treating Tutorial as just one more menu option to ignore
-  // and skipping straight to real matches with zero onboarding, which was
-  // hurting early retention. Set true by goBackToModeSelect() (reached after
-  // finishing/skipping the tutorial, or after any real match/quit), so it
-  // only ever gates the very first thing a session sees.
-  tutorialGateDone: false,
+  // and skipping straight into real matches with zero onboarding, which was
+  // hurting early retention. 'mode' is still very much a real screen, just
+  // never the FIRST one - reached normally once the tutorial finishes, gets
+  // skipped, or a real match ends/gets quit.
+  screen: 'mode', // mode | characterSolo | characterVersus | mobileCharacterSelect | mobileDifficultySelect | play
   mode: null, // 'solo' | 'versus'
   modeSelectIndex: 0, // 0 = Solo, 1 = 2 Player
   difficultyIndex: 0, // default Easy - Normal was too punishing for a brand-new player's very first match
@@ -1534,15 +1533,6 @@ function randomizeCharacterCursor(mode) {
 }
 
 function handleModeSelectKey(key) {
-  // Before the tutorial gate is resolved, the mode screen shows nothing but
-  // a "start tutorial" prompt + a Skip Tutorial button (see
-  // drawModeSelect()) - any key jumps straight into it, Escape is the
-  // keyboard equivalent of clicking Skip.
-  if (!app.tutorialGateDone) {
-    if (key === 'escape') { app.tutorialGateDone = true; return; }
-    startTutorial();
-    return;
-  }
   // Top-to-bottom order matches drawModeSelect()'s layout exactly, so arrow
   // up always moves the cursor visually up and arrow down always moves it
   // visually down: 0 = Tutorial (top), 1 = Solo (middle), 2 = 2 Player (bottom).
@@ -1557,7 +1547,6 @@ function handleModeSelectKey(key) {
 
 function goBackToModeSelect() {
   app.screen = 'mode';
-  app.tutorialGateDone = true; // they've already been through the tutorial-or-skip gate by now
   app.player1Locked = false;
   app.player2Locked = false;
   app.readyOpacity = 0;
@@ -1752,6 +1741,15 @@ function showTutorialDialog(lines, onDone) {
 }
 
 function advanceTutorialDialog() {
+  // The tutorial is set up and its first dialogue line is already showing
+  // before any input happens (see startTutorial()'s own comment - it runs
+  // immediately at load, with no menu screen first), but gameplayStart()
+  // itself has to wait for the player's actual first input per Poki's
+  // rules. Dismissing/advancing Coach's dialogue - the very first thing a
+  // player can do - IS that first input. Already guarded (no-ops if
+  // already active), so it's safe to call unconditionally on every advance,
+  // not just the first.
+  pokiGameplayStart();
   app.tutorial.dialogLines.shift();
   if (app.tutorial.dialogLines.length === 0) {
     const onDone = app.tutorial.onDialogDone;
@@ -1760,15 +1758,16 @@ function advanceTutorialDialog() {
   }
 }
 
-// The tutorial drives the real 'play' screen and gameplay code paths just
-// like an actual match (see app.tutorial's own comment) - so as far as Poki
-// is concerned it IS gameplay, and needs gameplayStart() the same as
-// beginGame() fires it. No commercialBreak() here (see beginGame()'s own
-// comment) - a brand-new player's very first thing seeing an ad before
-// they've played anything is exactly what this is meant to avoid.
-// finishTutorial() already routes through quitToModeSelect() (which calls
-// pokiGameplayStop()), so without the gameplayStart() below, that call was
-// silently no-opping - gameplayStart() had never fired to begin with.
+// Called immediately at load (see the bottom of this file) instead of
+// waiting on a menu screen - Coach's first line is already showing before
+// any input has happened. gameplayStart() deliberately does NOT fire in
+// here, even though the tutorial drives the real 'play' screen/gameplay
+// code paths just like an actual match: Poki requires it fire on the
+// player's actual first input, not on load. advanceTutorialDialog() (the
+// very first thing a player can do - dismiss/advance Coach's line) is
+// where it actually fires. Also called again later to relaunch the
+// tutorial from the mode-select menu - same deferred-start behavior
+// applies then too, for consistency.
 function startTutorial() {
   app.mode = 'solo';
   app.difficultyIndex = 0;
@@ -1788,7 +1787,6 @@ function startTutorial() {
   getPitcherFrames(pitcherChar().key);
   getBatterFrames(batterChar().key);
   resetBall();
-  pokiGameplayStart();
 
   // Mobile has its own on-screen pitch buttons (already labeled Fastball/
   // Knuckleball/Curveball/Riser - see drawPitchButtons()) instead of WASD,
@@ -2222,6 +2220,7 @@ function handlePointerDown(x, y) {
     else if (pointInQuitNoButton(x, y)) closeQuitConfirmAndResume();
     return;
   }
+  if (app.tutorial.active && pointInSkipTutorialButton(x, y)) { finishTutorial(); return; }
   // Click anywhere to advance Coach's dialogue - matches the "any key"
   // behavior in handleGameplayKey().
   if (app.tutorial.active && app.tutorial.dialogLines.length > 0) { advanceTutorialDialog(); return; }
@@ -2304,13 +2303,6 @@ canvas.addEventListener('touchend', releaseJoystickTouch, { passive: true });
 canvas.addEventListener('touchcancel', releaseJoystickTouch, { passive: true });
 
 function handleModeClick(x, y) {
-  // Same tutorial gate as handleModeSelectKey() - applies before the
-  // IS_MOBILE branch since it's the same landing prompt on both platforms.
-  if (!app.tutorialGateDone) {
-    if (pointInSkipTutorialButton(x, y)) { app.tutorialGateDone = true; return; }
-    startTutorial();
-    return;
-  }
   if (IS_MOBILE) {
     if (pointInPlayButton(x, y)) {
       app.mode = 'solo'; app.screen = 'mobileCharacterSelect';
@@ -2407,14 +2399,21 @@ function pointInMobileTutorialButton(x, y) {
   return x >= toX(b.x) && x <= toX(b.x) + lenX(b.w) && y >= toY(b.y) && y <= toY(b.y) + toLen(b.h);
 }
 
-// Top-right escape hatch off the tutorial-gate landing screen (see
-// app.tutorialGateDone) - sized to the actual text (not a guessed
-// constant) so it can't end up too cramped the way GAME_OVER_BTN once was.
+// Top-right escape hatch, visible for the tutorial's entire duration (see
+// drawGameplay()/handlePointerDown()) - one click bails straight out via
+// finishTutorial(), no confirmation needed (Escape's quit-confirm is for
+// leaving a REAL match mid-play, a more deliberate action than backing out
+// of onboarding). Sized to the actual text (not a guessed constant) so it
+// can't end up too cramped the way GAME_OVER_BTN once was. y:90 (not the
+// very top) matches BACK_BUTTON_INGAME's row - the scoreboard occupies
+// nearly the entire top strip (toX(5) to toX(395), toY(8) to toY(83)) once
+// gameplay is actually showing, unlike the old menu screen this button used
+// to live on.
 const SKIP_TUTORIAL_TEXT_SIZE = 15;
 const SKIP_TUTORIAL_BTN_H = 32;
 function skipTutorialButtonRect() {
   const w = textWidth('Skip Tutorial', SKIP_TUTORIAL_TEXT_SIZE, 700) + lenX(20);
-  return { bx: CANVAS_W - lenX(10) - w, by: toY(10), bw: w, bh: toLen(SKIP_TUTORIAL_BTN_H) };
+  return { bx: toX(390) - w, by: toY(90), bw: w, bh: toLen(SKIP_TUTORIAL_BTN_H) };
 }
 function pointInSkipTutorialButton(x, y) {
   const { bx, by, bw, bh } = skipTutorialButtonRect();
@@ -2432,18 +2431,6 @@ function drawModeSelect() {
   drawMenuParticles();
   drawCharacterShowcase();
   drawTitleLogo();
-
-  // First thing a new session sees: no menu at all, just the tutorial
-  // starting prompt + an explicit way out (see app.tutorialGateDone's own
-  // comment) - Tutorial used to be just one more menu button most players
-  // skipped straight past, landing them in a real match with zero
-  // onboarding.
-  if (!app.tutorialGateDone) {
-    drawSkipTutorialButton();
-    text(IS_MOBILE ? 'Tap To Start Tutorial' : 'Click Or Press Any Key To Start Tutorial',
-      CANVAS_W / 2, toY(200), IS_MOBILE ? 26 : 24, 'white', 1, 'center', 900);
-    return;
-  }
 
   if (IS_MOBILE) {
     rect(toX(PLAY_BUTTON.x), toY(PLAY_BUTTON.y), lenX(PLAY_BUTTON.w), toLen(PLAY_BUTTON.h), 'gold', 1, 'white', 5);
@@ -3275,6 +3262,10 @@ function drawGameplay() {
   drawPauseAnim();
   if (IS_MOBILE) drawMobileControls();
   drawTutorialOverlay(); // Coach's dialogue box, dims the scene while a line is up
+  // Stays up for the tutorial's entire duration, not just while Coach is
+  // talking - hidden under the quit-confirm modal (that one's already its
+  // own, more deliberate way out).
+  if (app.tutorial.active && !app.showQuitConfirm) drawSkipTutorialButton();
   drawQuitConfirm(); // on top of absolutely everything, including Pause's own freeze overlay and Coach
 }
 
@@ -4289,4 +4280,5 @@ function frame(ts) {
   requestAnimationFrame(frame);
 }
 
+startTutorial(); // session opens directly in the tutorial - see its own comment for why
 requestAnimationFrame(frame);
