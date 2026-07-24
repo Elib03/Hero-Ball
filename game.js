@@ -582,9 +582,17 @@ const ctx = canvas.getContext('2d');
 /* ============================== GAME STATE ============================== */
 const app = {
   screen: 'mode', // mode | characterSolo | characterVersus | mobileCharacterSelect | mobileDifficultySelect | play
+  // The 'mode' screen shows nothing but a "start tutorial" prompt + a Skip
+  // Tutorial button until this flips true (see drawModeSelect()) - a lot of
+  // players were treating Tutorial as just one more menu option to ignore
+  // and skipping straight to real matches with zero onboarding, which was
+  // hurting early retention. Set true by goBackToModeSelect() (reached after
+  // finishing/skipping the tutorial, or after any real match/quit), so it
+  // only ever gates the very first thing a session sees.
+  tutorialGateDone: false,
   mode: null, // 'solo' | 'versus'
   modeSelectIndex: 0, // 0 = Solo, 1 = 2 Player
-  difficultyIndex: 1,
+  difficultyIndex: 0, // default Easy - Normal was too punishing for a brand-new player's very first match
   player1Index: 0,
   player2Index: 0,
   cpuBatterIndex: 0,
@@ -622,6 +630,7 @@ const app = {
   batterFrameIndex: 0,
   batterHoldCount: 0,
   spinCount: 0, // ticks since the CPU's last pitch - drives its auto-pitch delay
+  firstCpuPitchDone: false, // see CPU_FIRST_PITCH_DELAY_STEPS - never resets once true, for the whole session
 
   pitch: '',
   checkHit: false,
@@ -1525,6 +1534,15 @@ function randomizeCharacterCursor(mode) {
 }
 
 function handleModeSelectKey(key) {
+  // Before the tutorial gate is resolved, the mode screen shows nothing but
+  // a "start tutorial" prompt + a Skip Tutorial button (see
+  // drawModeSelect()) - any key jumps straight into it, Escape is the
+  // keyboard equivalent of clicking Skip.
+  if (!app.tutorialGateDone) {
+    if (key === 'escape') { app.tutorialGateDone = true; return; }
+    startTutorial();
+    return;
+  }
   // Top-to-bottom order matches drawModeSelect()'s layout exactly, so arrow
   // up always moves the cursor visually up and arrow down always moves it
   // visually down: 0 = Tutorial (top), 1 = Solo (middle), 2 = 2 Player (bottom).
@@ -1539,6 +1557,7 @@ function handleModeSelectKey(key) {
 
 function goBackToModeSelect() {
   app.screen = 'mode';
+  app.tutorialGateDone = true; // they've already been through the tutorial-or-skip gate by now
   app.player1Locked = false;
   app.player2Locked = false;
   app.readyOpacity = 0;
@@ -1615,14 +1634,22 @@ function closeQuitConfirmAndResume() {
 // A match actually finishing (see switchSides()' game-over branch) goes
 // straight back to character select instead of all the way to mode-select -
 // same mode (solo/versus), just pick characters again for the rematch.
+// This is the one place commercialBreak() fires (see beginGame()'s own
+// comment for why it no longer gates match/tutorial start) - right as the
+// player leaves a completed game, never before they've played one.
+// pokiBreakPending guards against mashing the game-over button firing a
+// second overlapping break.
 function goToCharacterSelectAfterGameOver() {
-  app.screen = IS_MOBILE ? 'mobileCharacterSelect' : (app.mode === 'versus' ? 'characterVersus' : 'characterSolo');
-  app.player1Locked = false;
-  app.player2Locked = false;
-  app.difficultyLocked = false;
-  app.readyOpacity = 0;
-  randomizeCharacterCursor(app.mode);
-  resetMatchState();
+  if (pokiBreakPending) return;
+  pokiCommercialBreak(() => {
+    app.screen = IS_MOBILE ? 'mobileCharacterSelect' : (app.mode === 'versus' ? 'characterVersus' : 'characterSolo');
+    app.player1Locked = false;
+    app.player2Locked = false;
+    app.difficultyLocked = false;
+    app.readyOpacity = 0;
+    randomizeCharacterCursor(app.mode);
+    resetMatchState();
+  });
 }
 
 function handleSoloSelectKey(key) {
@@ -1696,18 +1723,14 @@ function startMatch() {
   crowdSound.play().catch(() => {});
 }
 
-// Poki wants a commercialBreak() right before every gameplayStart() - this
-// game has no separate pause/resume menu to hook that into (see
-// pokiCommercialBreak()), so "about to start or restart a match" is the
-// closest real equivalent. pokiBreakPending guards against the player
-// mashing Enter/tap again while a break's still resolving and firing a
-// second overlapping one.
+// No commercialBreak() here on purpose - showing an ad before a player has
+// even seen their first pitch (including a brand-new visitor's very first
+// match ever) was hurting early retention. The ad break now happens once,
+// after a match actually ends (see goToCharacterSelectAfterGameOver()),
+// never before one starts.
 function beginGame() {
-  if (pokiBreakPending) return;
-  pokiCommercialBreak(() => {
-    startMatch();
-    pokiGameplayStart();
-  });
+  startMatch();
+  pokiGameplayStart();
 }
 
 /* ============================== TUTORIAL ==============================
@@ -1739,49 +1762,48 @@ function advanceTutorialDialog() {
 
 // The tutorial drives the real 'play' screen and gameplay code paths just
 // like an actual match (see app.tutorial's own comment) - so as far as Poki
-// is concerned it IS gameplay, and needs the same commercialBreak() ->
-// gameplayStart() sequence beginGame() uses, not a silent app.screen flip.
+// is concerned it IS gameplay, and needs gameplayStart() the same as
+// beginGame() fires it. No commercialBreak() here (see beginGame()'s own
+// comment) - a brand-new player's very first thing seeing an ad before
+// they've played anything is exactly what this is meant to avoid.
 // finishTutorial() already routes through quitToModeSelect() (which calls
-// pokiGameplayStop()), so without this half of the pair, that call was
+// pokiGameplayStop()), so without the gameplayStart() below, that call was
 // silently no-opping - gameplayStart() had never fired to begin with.
 function startTutorial() {
-  if (pokiBreakPending) return;
-  pokiCommercialBreak(() => {
-    app.mode = 'solo';
-    app.difficultyIndex = 0;
-    // The Scientist - a clear, readable power-up demo (Drone Ball) for the
-    // tutorial's pitching walkthrough.
-    app.player1Index = CHARACTERS.findIndex(c => c.key === 'scientist');
-    app.cpuBatterIndex = 1;
-    resetMatchState(); // also zeroes out every app.tutorial field - re-armed right below
-    app.screen = 'play';
-    app.tutorial.active = true;
+  app.mode = 'solo';
+  app.difficultyIndex = 0;
+  // The Scientist - a clear, readable power-up demo (Drone Ball) for the
+  // tutorial's pitching walkthrough.
+  app.player1Index = CHARACTERS.findIndex(c => c.key === 'scientist');
+  app.cpuBatterIndex = 1;
+  resetMatchState(); // also zeroes out every app.tutorial field - re-armed right below
+  app.screen = 'play';
+  app.tutorial.active = true;
 
-    // Pitching first: the human throws (WASD/Z on desktop, on-screen
-    // buttons on mobile - see drawPitchButtons()/drawMobileControls()), the
-    // CPU bats.
-    app.homePitching = true;
-    assignActiveRoles();
-    getPitcherFrames(pitcherChar().key);
-    getBatterFrames(batterChar().key);
-    resetBall();
-    pokiGameplayStart();
+  // Pitching first: the human throws (WASD/Z on desktop, on-screen
+  // buttons on mobile - see drawPitchButtons()/drawMobileControls()), the
+  // CPU bats.
+  app.homePitching = true;
+  assignActiveRoles();
+  getPitcherFrames(pitcherChar().key);
+  getBatterFrames(batterChar().key);
+  resetBall();
+  pokiGameplayStart();
 
-    // Mobile has its own on-screen pitch buttons (already labeled Fastball/
-    // Knuckleball/Curveball/Riser - see drawPitchButtons()) instead of WASD,
-    // so the keyboard-mapping line is both wrong and unnecessary there.
-    showTutorialDialog([
-      "Hey, rookie! I'm Coach. Let's get you ready for the big leagues.",
-      IS_MOBILE
-        ? "First up: pitching. Tap a button to pick your pitch."
-        : "First up: pitching. Use these keys to pick your pitch:",
-      ...(IS_MOBILE ? [] : ["W = Fastball     A = Knuckleball\nS = Curveball     D = Riser"]),
-      IS_MOBILE
-        ? "Tap the power-up icon to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!"
-        : "Press Z to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!",
-      "Alright, let's see what you've got. Throw pitches until you strike the batter out!",
-    ], beginPitchPractice);
-  });
+  // Mobile has its own on-screen pitch buttons (already labeled Fastball/
+  // Knuckleball/Curveball/Riser - see drawPitchButtons()) instead of WASD,
+  // so the keyboard-mapping line is both wrong and unnecessary there.
+  showTutorialDialog([
+    "Hey, rookie! I'm Coach. Let's get you ready for the big leagues.",
+    IS_MOBILE
+      ? "First up: pitching. Tap a button to pick your pitch."
+      : "First up: pitching. Use these keys to pick your pitch:",
+    ...(IS_MOBILE ? [] : ["W = Fastball     A = Knuckleball\nS = Curveball     D = Riser"]),
+    IS_MOBILE
+      ? "Tap the power-up icon to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!"
+      : "Press Z to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!",
+    "Alright, let's see what you've got. Throw pitches until you strike the batter out!",
+  ], beginPitchPractice);
 }
 
 function beginPitchPractice() {
@@ -2282,6 +2304,13 @@ canvas.addEventListener('touchend', releaseJoystickTouch, { passive: true });
 canvas.addEventListener('touchcancel', releaseJoystickTouch, { passive: true });
 
 function handleModeClick(x, y) {
+  // Same tutorial gate as handleModeSelectKey() - applies before the
+  // IS_MOBILE branch since it's the same landing prompt on both platforms.
+  if (!app.tutorialGateDone) {
+    if (pointInSkipTutorialButton(x, y)) { app.tutorialGateDone = true; return; }
+    startTutorial();
+    return;
+  }
   if (IS_MOBILE) {
     if (pointInPlayButton(x, y)) {
       app.mode = 'solo'; app.screen = 'mobileCharacterSelect';
@@ -2378,12 +2407,43 @@ function pointInMobileTutorialButton(x, y) {
   return x >= toX(b.x) && x <= toX(b.x) + lenX(b.w) && y >= toY(b.y) && y <= toY(b.y) + toLen(b.h);
 }
 
+// Top-right escape hatch off the tutorial-gate landing screen (see
+// app.tutorialGateDone) - sized to the actual text (not a guessed
+// constant) so it can't end up too cramped the way GAME_OVER_BTN once was.
+const SKIP_TUTORIAL_TEXT_SIZE = 15;
+const SKIP_TUTORIAL_BTN_H = 32;
+function skipTutorialButtonRect() {
+  const w = textWidth('Skip Tutorial', SKIP_TUTORIAL_TEXT_SIZE, 700) + lenX(20);
+  return { bx: CANVAS_W - lenX(10) - w, by: toY(10), bw: w, bh: toLen(SKIP_TUTORIAL_BTN_H) };
+}
+function pointInSkipTutorialButton(x, y) {
+  const { bx, by, bw, bh } = skipTutorialButtonRect();
+  return x >= bx && x <= bx + bw && y >= by && y <= by + bh;
+}
+function drawSkipTutorialButton() {
+  const { bx, by, bw, bh } = skipTutorialButtonRect();
+  rect(bx, by, bw, bh, 'rgba(0,0,0,0.5)', 1, 'white', 2);
+  text('Skip Tutorial', bx + bw / 2, by + bh / 2, SKIP_TUTORIAL_TEXT_SIZE, 'white', 1, 'center', 700);
+}
+
 /* ============================== MENU DRAWING ============================== */
 function drawModeSelect() {
   drawMenuBackground();
   drawMenuParticles();
   drawCharacterShowcase();
   drawTitleLogo();
+
+  // First thing a new session sees: no menu at all, just the tutorial
+  // starting prompt + an explicit way out (see app.tutorialGateDone's own
+  // comment) - Tutorial used to be just one more menu button most players
+  // skipped straight past, landing them in a real match with zero
+  // onboarding.
+  if (!app.tutorialGateDone) {
+    drawSkipTutorialButton();
+    text(IS_MOBILE ? 'Tap To Start Tutorial' : 'Click Or Press Any Key To Start Tutorial',
+      CANVAS_W / 2, toY(200), IS_MOBILE ? 26 : 24, 'white', 1, 'center', 900);
+    return;
+  }
 
   if (IS_MOBILE) {
     rect(toX(PLAY_BUTTON.x), toY(PLAY_BUTTON.y), lenX(PLAY_BUTTON.w), toLen(PLAY_BUTTON.h), 'gold', 1, 'white', 5);
@@ -3171,9 +3231,15 @@ function drawQuitConfirm() {
 // the button, instead of auto-navigating away or blocking on a native
 // alert(). Raw canvas pixels throughout, same reasoning as
 // QUIT_PANEL/quitPanelRect().
-const GAME_OVER_BTN = { w: 260, h: 65 };
+// Bug fix: w used to be a hardcoded 260, but 'Back To Menu' at this size/
+// weight actually measures ~277px - the text was overflowing its own box
+// with no room to spare. Size the box to the text itself (plus real
+// padding) instead of a guessed constant.
+const GAME_OVER_BTN_H = 65;
+const GAME_OVER_BTN_TEXT_SIZE = 20;
 function gameOverButtonRect() {
-  return { bx: CANVAS_W / 2 - GAME_OVER_BTN.w / 2, by: CANVAS_H / 2 + 50, bw: GAME_OVER_BTN.w, bh: GAME_OVER_BTN.h };
+  const w = textWidth('Back To Menu', GAME_OVER_BTN_TEXT_SIZE, 900) + lenX(48);
+  return { bx: CANVAS_W / 2 - w / 2, by: CANVAS_H / 2 + 50, bw: w, bh: GAME_OVER_BTN_H };
 }
 function pointInGameOverButton(x, y) {
   const { bx, by, bw, bh } = gameOverButtonRect();
@@ -3188,7 +3254,7 @@ function drawGameOver() {
 
   const { bx, by, bw, bh } = gameOverButtonRect();
   rect(bx, by, bw, bh, 'rgba(210,30,30,0.85)', 1, 'white', 2);
-  text('Back To Menu', CANVAS_W / 2, by + bh / 2, 20, 'white', 1, 'center', 900);
+  text('Back To Menu', CANVAS_W / 2, by + bh / 2, GAME_OVER_BTN_TEXT_SIZE, 'white', 1, 'center', 900);
 }
 
 function drawGameplay() {
@@ -3853,6 +3919,13 @@ function stepDice() {
 }
 
 const CPU_PITCH_DELAY_STEPS = 150; // ~3.75s at 40 steps/sec - "a set delay" before the CPU pitches on its own
+// A brand-new player's very first pitch faced shouldn't sit through the same
+// ~3.75s dead air as every pitch after it - that pause reads fine once
+// you're already invested, but as literally the first thing that happens
+// after picking a character, it's just a stall. Only this one pitch (ever,
+// for the whole session) uses the short delay; app.firstCpuPitchDone flips
+// permanently once it actually fires.
+const CPU_FIRST_PITCH_DELAY_STEPS = 40; // ~1s
 
 function stepCpu() {
   if (app.mode !== 'solo') return;
@@ -3861,15 +3934,17 @@ function stepCpu() {
   }
   if (app.activePitcherKey === 'cpu') {
     app.spinCount++;
+    const delayThreshold = app.firstCpuPitchDone ? CPU_PITCH_DELAY_STEPS : CPU_FIRST_PITCH_DELAY_STEPS;
     // Bug fix: this used to only check `=== CPU_PITCH_DELAY_STEPS` on the exact
     // step the counter hit the threshold. If canStartPitch() was blocked right
     // then (call banner, dice roll, or other stop-animation in progress), the
     // counter would blow past the threshold and CPU pitching would just stall
     // for a very long time before retrying. Now it keeps retrying every step
     // once the delay has elapsed, so the CPU pitches the instant it's clear to.
-    if (app.spinCount >= CPU_PITCH_DELAY_STEPS) {
+    if (app.spinCount >= delayThreshold) {
       if (canStartPitch()) {
         app.spinCount = 0;
+        app.firstCpuPitchDone = true;
         cpuPitch();
       }
     }
