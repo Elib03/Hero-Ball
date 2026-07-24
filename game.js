@@ -1757,7 +1757,9 @@ function startTutorial() {
     app.screen = 'play';
     app.tutorial.active = true;
 
-    // Pitching first: the human throws (WASD/Z), the CPU bats.
+    // Pitching first: the human throws (WASD/Z on desktop, on-screen
+    // buttons on mobile - see drawPitchButtons()/drawMobileControls()), the
+    // CPU bats.
     app.homePitching = true;
     assignActiveRoles();
     getPitcherFrames(pitcherChar().key);
@@ -1765,11 +1767,18 @@ function startTutorial() {
     resetBall();
     pokiGameplayStart();
 
+    // Mobile has its own on-screen pitch buttons (already labeled Fastball/
+    // Knuckleball/Curveball/Riser - see drawPitchButtons()) instead of WASD,
+    // so the keyboard-mapping line is both wrong and unnecessary there.
     showTutorialDialog([
       "Hey, rookie! I'm Coach. Let's get you ready for the big leagues.",
-      "First up: pitching. Use these keys to pick your pitch:",
-      "W = Fastball     A = Knuckleball\nS = Curveball     D = Riser",
-      "Press Z to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!",
+      IS_MOBILE
+        ? "First up: pitching. Tap a button to pick your pitch."
+        : "First up: pitching. Use these keys to pick your pitch:",
+      ...(IS_MOBILE ? [] : ["W = Fastball     A = Knuckleball\nS = Curveball     D = Riser"]),
+      IS_MOBILE
+        ? "Tap the power-up icon to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!"
+        : "Press Z to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!",
       "Alright, let's see what you've got. Throw pitches until you strike the batter out!",
     ], beginPitchPractice);
   });
@@ -1846,8 +1855,12 @@ function stepTutorial() {
     t.pitchingStrikeoutDone = false;
     showTutorialDialog([
       "Strikeout! Beautiful pitching, rookie!",
-      "Now let's work on your batting. Move your mouse to slide the crosshair around, and try to anticipate where the pitch will end up.",
-      "When the ball enters your crosshair, click to swing. Timing is everything!",
+      IS_MOBILE
+        ? "Now let's work on your batting. Drag the joystick to slide the crosshair around, and try to anticipate where the pitch will end up."
+        : "Now let's work on your batting. Move your mouse to slide the crosshair around, and try to anticipate where the pitch will end up.",
+      IS_MOBILE
+        ? "When the ball enters your crosshair, tap SWING. Timing is everything!"
+        : "When the ball enters your crosshair, click to swing. Timing is everything!",
       "Let's start easy: a slow, straight pitch right down the middle. Take your time.",
     ], beginBattingEasy);
     return;
@@ -1943,7 +1956,7 @@ function drawTutorialOverlay() {
 
   wrapTutorialText(t.dialogLines[0], panelX + 26, panelY + textTopPad, panelW - 52, textSize, textWeight);
 
-  text('Click or press any key to continue ▶', panelX + panelW - 24, panelY + panelH - 22, 13, '#cccccc', 0.9, 'right', 600);
+  text(IS_MOBILE ? 'Tap to continue ▶' : 'Click or press any key to continue ▶', panelX + panelW - 24, panelY + panelH - 22, 13, '#cccccc', 0.9, 'right', 600);
 }
 
 /* ============================== INPUT: GAMEPLAY ============================== */
@@ -2229,8 +2242,13 @@ canvas.addEventListener('touchstart', e => {
     const { x, y } = touchToCanvasXY(touch);
     // Only the batting layout has a joystick at all (drawMobileControls) -
     // a touch landing in that zone during any other screen/role just falls
-    // through to the normal tap dispatch below.
+    // through to the normal tap dispatch below. Also excluded while Coach's
+    // dialogue box is up: it dims/covers the joystick's usual spot (along
+    // with the rest of the screen) and freezes gameplay, so a tap there
+    // should dismiss the dialogue (via handlePointerDown()) instead of
+    // silently grabbing an invisible, inert joystick.
     if (app.screen === 'play' && !app.showQuitConfirm && app.activeBatterKey !== 'cpu'
+        && !(app.tutorial.active && app.tutorial.dialogLines.length > 0)
         && joystick.touchId === null && pointInJoystickZone(x, y)) {
       joystick.touchId = touch.identifier;
       updateJoystickDeflection(x, y);
@@ -2268,6 +2286,8 @@ function handleModeClick(x, y) {
     if (pointInPlayButton(x, y)) {
       app.mode = 'solo'; app.screen = 'mobileCharacterSelect';
       randomizeCharacterCursor('solo');
+    } else if (pointInMobileTutorialButton(x, y)) {
+      startTutorial();
     }
     return;
   }
@@ -2343,11 +2363,19 @@ function drawMobileConfirmButton(label) {
 }
 
 // Mobile has no 2-player mode, so the mode-select screen collapses to one
-// "Play" box in roughly the same spot the desktop "Solo" box occupies.
+// "Play" box in roughly the same spot the desktop "Solo" box occupies, plus
+// a smaller "Tutorial" box below it (Tutorial skips character select
+// entirely on both platforms - see startTutorial() - so it doesn't need its
+// own mobile character/difficulty flow, just a direct entry point here).
 const PLAY_BUTTON = { x: 125, y: 150, w: 150, h: 90 };
+const MOBILE_TUTORIAL_BUTTON = { x: 125, y: 250, w: 150, h: 70 };
 function pointInPlayButton(x, y) {
   return x >= toX(PLAY_BUTTON.x) && x <= toX(PLAY_BUTTON.x) + lenX(PLAY_BUTTON.w)
     && y >= toY(PLAY_BUTTON.y) && y <= toY(PLAY_BUTTON.y) + toLen(PLAY_BUTTON.h);
+}
+function pointInMobileTutorialButton(x, y) {
+  const b = MOBILE_TUTORIAL_BUTTON;
+  return x >= toX(b.x) && x <= toX(b.x) + lenX(b.w) && y >= toY(b.y) && y <= toY(b.y) + toLen(b.h);
 }
 
 /* ============================== MENU DRAWING ============================== */
@@ -2360,7 +2388,10 @@ function drawModeSelect() {
   if (IS_MOBILE) {
     rect(toX(PLAY_BUTTON.x), toY(PLAY_BUTTON.y), lenX(PLAY_BUTTON.w), toLen(PLAY_BUTTON.h), 'gold', 1, 'white', 5);
     text('Play', toX(200), toY(PLAY_BUTTON.y + PLAY_BUTTON.h / 2), 46, '#222', 1, 'center', 900);
-    text('Tap To Play', CANVAS_W / 2, toY(360), 16, 'white', 0.85, 'center', 700);
+    const tb = MOBILE_TUTORIAL_BUTTON;
+    rect(toX(tb.x), toY(tb.y), lenX(tb.w), toLen(tb.h), 'gold', 1, 'white', 5);
+    text('Tutorial', toX(200), toY(tb.y + tb.h / 2), 26, '#222', 1, 'center', 900);
+    text('Tap A Mode To Start', CANVAS_W / 2, toY(345), 16, 'white', 0.85, 'center', 700);
     return;
   }
 
