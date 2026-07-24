@@ -2594,6 +2594,12 @@ function drawScoreboard() {
 }
 
 function drawPitchMenu() {
+  // Solo mode has the human as exactly one of pitcher/batter at a time (the
+  // other is CPU) - the WASD/arrow pitch-key legend is only relevant while
+  // actually pitching, so don't show it while just batting. Versus mode
+  // always has a human pitching (just not necessarily the one currently
+  // looking at this side of the screen), so it stays shown there.
+  if (app.mode === 'solo' && app.activePitcherKey === 'cpu') return;
   const entries = app.homePitching
     ? [['W', 'Fastball'], ['A', 'Knuckleball'], ['S', 'Curveball'], ['D', 'Riser']]
     : [['↑', 'Fastball'], ['←', 'Knuckleball'], ['↓', 'Curveball'], ['→', 'Riser']];
