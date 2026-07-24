@@ -1737,31 +1737,42 @@ function advanceTutorialDialog() {
   }
 }
 
+// The tutorial drives the real 'play' screen and gameplay code paths just
+// like an actual match (see app.tutorial's own comment) - so as far as Poki
+// is concerned it IS gameplay, and needs the same commercialBreak() ->
+// gameplayStart() sequence beginGame() uses, not a silent app.screen flip.
+// finishTutorial() already routes through quitToModeSelect() (which calls
+// pokiGameplayStop()), so without this half of the pair, that call was
+// silently no-opping - gameplayStart() had never fired to begin with.
 function startTutorial() {
-  app.mode = 'solo';
-  app.difficultyIndex = 0;
-  // The Scientist - a clear, readable power-up demo (Drone Ball) for the
-  // tutorial's pitching walkthrough.
-  app.player1Index = CHARACTERS.findIndex(c => c.key === 'scientist');
-  app.cpuBatterIndex = 1;
-  resetMatchState(); // also zeroes out every app.tutorial field - re-armed right below
-  app.screen = 'play';
-  app.tutorial.active = true;
+  if (pokiBreakPending) return;
+  pokiCommercialBreak(() => {
+    app.mode = 'solo';
+    app.difficultyIndex = 0;
+    // The Scientist - a clear, readable power-up demo (Drone Ball) for the
+    // tutorial's pitching walkthrough.
+    app.player1Index = CHARACTERS.findIndex(c => c.key === 'scientist');
+    app.cpuBatterIndex = 1;
+    resetMatchState(); // also zeroes out every app.tutorial field - re-armed right below
+    app.screen = 'play';
+    app.tutorial.active = true;
 
-  // Pitching first: the human throws (WASD/Z), the CPU bats.
-  app.homePitching = true;
-  assignActiveRoles();
-  getPitcherFrames(pitcherChar().key);
-  getBatterFrames(batterChar().key);
-  resetBall();
+    // Pitching first: the human throws (WASD/Z), the CPU bats.
+    app.homePitching = true;
+    assignActiveRoles();
+    getPitcherFrames(pitcherChar().key);
+    getBatterFrames(batterChar().key);
+    resetBall();
+    pokiGameplayStart();
 
-  showTutorialDialog([
-    "Hey, rookie! I'm Coach. Let's get you ready for the big leagues.",
-    "First up: pitching. Use these keys to pick your pitch:",
-    "W = Fastball     A = Knuckleball\nS = Curveball     D = Riser",
-    "Press Z to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!",
-    "Alright, let's see what you've got. Throw pitches until you strike the batter out!",
-  ], beginPitchPractice);
+    showTutorialDialog([
+      "Hey, rookie! I'm Coach. Let's get you ready for the big leagues.",
+      "First up: pitching. Use these keys to pick your pitch:",
+      "W = Fastball     A = Knuckleball\nS = Curveball     D = Riser",
+      "Press Z to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!",
+      "Alright, let's see what you've got. Throw pitches until you strike the batter out!",
+    ], beginPitchPractice);
+  });
 }
 
 function beginPitchPractice() {
