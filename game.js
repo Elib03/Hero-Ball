@@ -130,6 +130,11 @@ function menuCharacterImage(key) {
   return (img.complete && img.naturalWidth) ? img : portraits[key];
 }
 
+// The tutorial's dialogue-box guide - a coach character who "walks in" over
+// a dimmed screen whenever there's instructional text to show. See
+// drawTutorialOverlay().
+const COACH_IMG = loadImage(PORTRAITS + 'coach_tutorial.png');
+
 /* ============================== MENU SCREEN DRESSING ============================== */
 // Everything below is purely decorative for the title/mode-select screen:
 // a dusk-lit field backdrop, slow-drifting themed particles, a fanned
@@ -215,32 +220,74 @@ function drawMenuParticles() {
   });
 }
 
-// All 10 characters fanned out in a staggered strip - a trading-card-spread
-// lineup poster - in the gap between the Solo and 2 Player buttons (y 150-250,
-// otherwise unused). Alternating vertical offset and a slight alternating
-// tilt give the fan/stagger look; a slow float plus a soft pulsing glow in
-// each character's own color (rim-light-style, via canvas shadowBlur, which
-// hugs the portrait's actual silhouette since the art has a transparent
-// background) bring it to life without needing CSS animation.
+// Per-character layout jitter, rolled once at load (not re-rolled every
+// frame, so positions stay put across renders instead of jittering) - see
+// drawCharacterShowcase(). Kept small/bounded on purpose: each character
+// gets its own grid cell there, and jitter must stay well inside that cell's
+// slack so bigger portraits still never touch their neighbors.
+const SHOWCASE_LAYOUT = CHARACTERS.map(() => ({
+  xJitter: (Math.random() - 0.5) * 2, // -1..1
+  yJitter: (Math.random() - 0.5) * 2, // -1..1
+  tiltJitter: (Math.random() - 0.5) * 2, // -1..1
+}));
+
+// All 10 characters laid out in a 2-column grid per side, standing in the
+// grass to the left and right of the menu buttons (which occupy the center,
+// x:125-275 in 400-unit space - toX(125)=400px to toX(275)=880px on the real
+// canvas) rather than crossing behind them. A grid (not a single-file
+// column) is what lets each portrait be drawn bigger while guaranteeing its
+// cell's neighbors can't overlap it - a single column doesn't have enough
+// vertical room in just the grass for 5 same-side portraits at a readable
+// size. Small per-character jitter (bounded well inside each cell's slack)
+// plus alternating tilt keeps it from reading as a rigid grid. The band
+// starts a little above where the grass is fully established (toY(215), see
+// drawMenuBackground's own comment) - close enough to still read as
+// standing in the grass - and stays short of the canvas bottom. A slow
+// float plus a soft pulsing glow in each character's own color (rim-light-
+// style, via canvas shadowBlur, which hugs the portrait's actual silhouette
+// since the art has a transparent background) bring it to life without
+// needing CSS animation.
 function drawCharacterShowcase() {
-  const n = CHARACTERS.length;
-  // Desktop's Solo/2 Player buttons (y:70-150 and y:250-330) leave a clear
-  // gap around y=200 for the showcase. Mobile's single Play button (y:150-
-  // 240, see PLAY_BUTTON) sits right on top of that same spot, so mobile
-  // needs the showcase moved down below the button instead.
-  const bandCx = CANVAS_W / 2, bandCy = IS_MOBILE ? toY(300) : toY(200);
-  const spacing = Math.min(lenX(38), (CANVAS_W - toX(40)) / n);
+  const half = Math.ceil(CHARACTERS.length / 2); // left group gets the extra character when the roster is odd
+  // 3 columns x 2 rows (6 cells for 5 characters, one left empty) rather
+  // than 2x3 - portraits are taller than they are wide, so the constraint
+  // that actually limits size is vertical room, and 2 rows instead of 3
+  // roughly doubles each cell's height for the same total band.
+  const cols = 3;
+  const rows = Math.ceil(half / cols);
+  // Raw canvas pixels (not the 400-unit toX/toLen system - toLen in
+  // particular is lenY, the vertical scale factor, so using it for a
+  // horizontal span would apply the wrong axis's scale entirely).
+  const zoneXLeft = [20, 380];
+  const zoneXRight = [CANVAS_W - 380, CANVAS_W - 20];
+  const zoneYTop = 345, zoneYBottom = 690;
+  const colW = (zoneXLeft[1] - zoneXLeft[0]) / cols;
+  const rowH = (zoneYBottom - zoneYTop) / rows;
   const t = (Date.now() - MENU_LOAD_TIME) / 1000;
   CHARACTERS.forEach((c, i) => {
     const img = menuCharacterImage(c.key);
     if (!img.complete || !img.naturalWidth) return;
-    const offsetFromCenter = i - (n - 1) / 2;
-    const cx = bandCx + offsetFromCenter * spacing;
+    const isLeft = i < half;
+    const idxInGroup = isLeft ? i : i - half;
+    const row = Math.floor(idxInGroup / cols), col = idxInGroup % cols;
+    const zoneX = isLeft ? zoneXLeft : zoneXRight;
+    // Brick/masonry offset: every odd row is shifted half a column over, so
+    // its portraits sit in the horizontal gaps between the row above's
+    // portraits instead of stacking directly beneath them.
+    const rowXOffset = (row % 2 === 1) ? colW / 2 : 0;
+    const cellCx = zoneX[0] + (col + 0.5) * colW + rowXOffset;
+    const cellCy = zoneYTop + (row + 0.5) * rowH;
+    const layout = SHOWCASE_LAYOUT[i];
     const stagger = (i % 2 === 0) ? -1 : 1;
     const floatY = Math.sin(t * 0.6 + i * 1.3) * toLen(4);
-    const cy = bandCy + stagger * toLen(14) + floatY;
-    const tilt = stagger * 6;
-    const h = toLen(70), w = h * (img.naturalWidth / img.naturalHeight);
+    // Jitter capped at a fraction of each cell's own half-size, so it can
+    // never push a portrait into a neighboring cell.
+    const cx = cellCx + layout.xJitter * colW * 0.08;
+    const cy = cellCy + layout.yJitter * rowH * 0.08 + floatY;
+    const tilt = stagger * 5 + layout.tiltJitter * 4;
+    // Raw pixels (matching the zone math above), sized to comfortably fill
+    // most of a cell's height without touching the next row/column's cell.
+    const h = 140, w = h * (img.naturalWidth / img.naturalHeight);
     const glowPulse = 0.6 + 0.4 * Math.sin(t * 1.4 + i * 0.9);
     ctx.save();
     ctx.shadowColor = c.color;
@@ -656,6 +703,26 @@ const app = {
 
   batFireVisible: false,
 
+  // Interactive tutorial (see startTutorial()/stepTutorial()/
+  // drawTutorialOverlay()). Reuses the real 'play' screen and gameplay code
+  // paths throughout - active/practiceStep/dialogLines just gate a handful
+  // of surgical hooks (forced CPU behavior, forced pitch selection, progress
+  // detection) sprinkled through the normal rules functions, rather than
+  // duplicating the whole game loop.
+  tutorial: {
+    active: false,
+    practiceStep: null, // null | 'pitch' | 'bat_easy' | 'bat_medium' | 'bat_full'
+    dialogLines: [], // remaining lines of the current Coach dialogue; drawTutorialOverlay() shows dialogLines[0]
+    onDialogDone: null, // called once the last line in dialogLines has been advanced past
+    forcedPitch: null, // when set, cpuPitch() throws exactly this pitch instead of rolling one
+    forceWhiffCpuBatter: false, // pitching practice: the CPU batter never makes contact
+    forceStrikeOnBall: false, // pitching practice: every pitch counts as a Strike, never a Ball
+    awaitingContact: false, // batting practice: waiting for the player to make contact
+    contactMade: false, // set by resolveHit() once contact happens during awaitingContact
+    pitchingStrikeoutDone: false, // set once the scripted pitching drill's strikeout lands
+    atBatResolved: false, // set once the closing full at-bat concludes (hit/walk/out)
+  },
+
   fireTuneActive: false, // debug: live fire-trail alignment tuning (press F)
   fireTuneFrame: 0, // 0 = ready stance, 1-5 = swing frames (matches batterFrameIndex numbering)
 };
@@ -763,6 +830,11 @@ function resetBall() {
     crosshairRadius = toLen(11);
     criticalRadius = toLen(3.5);
   }
+  // Tutorial batting drills (bat_easy/bat_medium) repeat the same forced
+  // pitch until the player makes contact - wiping the strike/ball dots every
+  // time a pitch resolves without contact means a called strike/ball can
+  // never accumulate into a real strikeout/walk and end the drill early.
+  if (app.tutorial.active && app.tutorial.awaitingContact) clearCounts(true);
 }
 
 /* ============================== DRAW HELPERS ============================== */
@@ -1078,6 +1150,10 @@ function clearPowerupVisuals() {
 }
 
 function recordBaseHit() {
+  // Tutorial's closing full at-bat (bat_full) ends on whatever the at-bat's
+  // outcome turns out to be - a hit is one of the three ways it can conclude
+  // (alongside a walk in forceWalk() and an out in recordOut()).
+  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_full') app.tutorial.atBatResolved = true;
   if (app.voidActive) { ball.visible = true; app.voidActive = false; }
   clearPowerupVisuals();
 
@@ -1113,8 +1189,20 @@ function recordBaseHit() {
 }
 
 function recordOut() {
+  // Tutorial pitching drill: the CPU batter is forced to always whiff (see
+  // cpuSwing()) and every Ball is redirected into a Strike (see recordBall()),
+  // so the only way this ever fires during that drill is the 3rd strike - a
+  // genuine strikeout, already clearly signposted by the 3rd "Strike" banner.
+  // Bail out before the real Out banner/sound and before touching the real
+  // out counters (which persist across a whole half-inning and would
+  // eventually trigger a real switchSides()/game-over) - the scripted drill
+  // only ever wants exactly one, with no extra banner stacked on top.
+  if (app.tutorial.active && app.tutorial.forceStrikeOnBall) { app.tutorial.pitchingStrikeoutDone = true; return; }
   showCallBanner('Out');
   playSound(SOUNDS.out);
+  // Tutorial's closing full at-bat ends on an out just as validly as a hit or
+  // walk - see the matching hook in recordBaseHit()/forceWalk().
+  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_full') app.tutorial.atBatResolved = true;
   // Every out ends that batter's plate appearance, including a Ground Out
   // reached via contact (see the ball.y >= toY(300) ground-bounce check in
   // update(), which calls recordOut() directly) - Future Sight must clear
@@ -1199,6 +1287,7 @@ function recordStrike() {
 }
 
 function forceWalk() {
+  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_full') app.tutorial.atBatResolved = true;
   showCallBanner('Walk');
   ballFills[0] = ballFills[1] = ballFills[2] = ballFills[3] = 'dimgray';
   for (let j = 0; j < 3; j++) {
@@ -1208,6 +1297,9 @@ function forceWalk() {
 }
 
 function recordBall() {
+  // Tutorial pitching drill: every pitch must count as a Strike so the
+  // player reliably lands a strikeout instead of stalling out on a walk.
+  if (app.tutorial.active && app.tutorial.forceStrikeOnBall) { recordStrike(); return; }
   showCallBanner('Ball');
   playSound(SOUNDS.ball);
   if (app.voidActive) { ball.visible = true; app.voidActive = false; }
@@ -1330,6 +1422,10 @@ function finishDiceCardScroll() {
 /* ============================== CPU AI ============================== */
 function cpuSwing() {
   app.cpuSwung = true;
+  // Tutorial pitching drill: guarantee the strikeout instead of leaving it to
+  // the CPU's normal ~24.5% contact odds, which could stall the drill for a
+  // long, un-fun stretch of at-bats.
+  if (app.tutorial.active && app.tutorial.forceWhiffCpuBatter) return;
   if (app.powerUpActive) {
     // A special pitch effect is in play (disguised/tricky ball), so contact
     // odds drop from 24.5% to exactly 10% - same 70/20/10 Single/Double/Home
@@ -1360,6 +1456,15 @@ function cpuSwing() {
 }
 
 function cpuPitch() {
+  // Tutorial batting drills (bat_easy/bat_medium) script an exact pitch
+  // instead of the CPU's normal random selection, so the difficulty ramps up
+  // exactly the way the drill promises. bat_full leaves forcedPitch null and
+  // falls through to the real Easy-difficulty roll below.
+  if (app.tutorial.active && app.tutorial.forcedPitch) {
+    app.pitch = app.tutorial.forcedPitch;
+    app.isPitching = true;
+    return;
+  }
   const sets = [
     ['EFastball', 'ECurveball', 'EKnuckleball', 'ERiser'],
     ['Fastball', 'Curveball', 'Knuckleball', 'Riser'],
@@ -1405,7 +1510,7 @@ window.addEventListener('keydown', e => {
     return;
   }
   if (app.screen === 'play') {
-    handleGameplayKey(key);
+    handleGameplayKey(key, e.repeat);
   }
 });
 
@@ -1420,11 +1525,15 @@ function randomizeCharacterCursor(mode) {
 }
 
 function handleModeSelectKey(key) {
-  if (key === 'arrowup' || key === 'w') app.modeSelectIndex = 0;
-  else if (key === 'arrowdown' || key === 's') app.modeSelectIndex = 1;
+  // Top-to-bottom order matches drawModeSelect()'s layout exactly, so arrow
+  // up always moves the cursor visually up and arrow down always moves it
+  // visually down: 0 = Tutorial (top), 1 = Solo (middle), 2 = 2 Player (bottom).
+  if (key === 'arrowup' || key === 'w') app.modeSelectIndex = (app.modeSelectIndex + 2) % 3;
+  else if (key === 'arrowdown' || key === 's') app.modeSelectIndex = (app.modeSelectIndex + 1) % 3;
   else if (key === 'enter') {
-    if (app.modeSelectIndex === 0) { app.mode = 'solo'; app.screen = 'characterSolo'; randomizeCharacterCursor('solo'); }
-    else { app.mode = 'versus'; app.screen = 'characterVersus'; randomizeCharacterCursor('versus'); }
+    if (app.modeSelectIndex === 1) { app.mode = 'solo'; app.screen = 'characterSolo'; randomizeCharacterCursor('solo'); }
+    else if (app.modeSelectIndex === 2) { app.mode = 'versus'; app.screen = 'characterVersus'; randomizeCharacterCursor('versus'); }
+    else startTutorial();
   }
 }
 
@@ -1463,6 +1572,20 @@ function resetMatchState() {
   app.batPowerFull = true;
   app.pitchPowerFull = true;
   crowdSound.pause();
+  // Every path that ends a match (quitting, game over) or is about to start
+  // a fresh one (startTutorial()) funnels through here - always leave the
+  // tutorial fully off; startTutorial() re-arms it right after this returns.
+  app.tutorial.active = false;
+  app.tutorial.practiceStep = null;
+  app.tutorial.dialogLines = [];
+  app.tutorial.onDialogDone = null;
+  app.tutorial.forcedPitch = null;
+  app.tutorial.forceWhiffCpuBatter = false;
+  app.tutorial.forceStrikeOnBall = false;
+  app.tutorial.awaitingContact = false;
+  app.tutorial.contactMade = false;
+  app.tutorial.pitchingStrikeoutDone = false;
+  app.tutorial.atBatResolved = false;
 }
 
 function quitToModeSelect() {
@@ -1587,6 +1710,231 @@ function beginGame() {
   });
 }
 
+/* ============================== TUTORIAL ==============================
+   A scripted walkthrough that reuses the real 'play' screen and gameplay
+   code paths (pitching, batting, CPU AI, scoring) rather than a separate
+   mock-up - see the app.tutorial state block for what each flag gates, and
+   the surgical hooks in resetBall()/recordBall()/recordOut()/forceWalk()/
+   recordBaseHit()/resolveHit()/cpuSwing()/cpuPitch() for how the drills
+   force guaranteed outcomes and detect when the player has cleared a step.
+   update() calls stepTutorial() every tick and freezes gameplay (exactly
+   like the quit-confirm modal already does) while a dialogue line is up. */
+
+// Shows Coach's dialogue box with the given lines (one at a time, advanced
+// by any keypress/click - see advanceTutorialDialog()); onDone runs once the
+// player has clicked/pressed past the last line.
+function showTutorialDialog(lines, onDone) {
+  app.tutorial.dialogLines = lines.slice();
+  app.tutorial.onDialogDone = onDone || null;
+}
+
+function advanceTutorialDialog() {
+  app.tutorial.dialogLines.shift();
+  if (app.tutorial.dialogLines.length === 0) {
+    const onDone = app.tutorial.onDialogDone;
+    app.tutorial.onDialogDone = null;
+    if (onDone) onDone();
+  }
+}
+
+function startTutorial() {
+  app.mode = 'solo';
+  app.difficultyIndex = 0;
+  // The Scientist - a clear, readable power-up demo (Drone Ball) for the
+  // tutorial's pitching walkthrough.
+  app.player1Index = CHARACTERS.findIndex(c => c.key === 'scientist');
+  app.cpuBatterIndex = 1;
+  resetMatchState(); // also zeroes out every app.tutorial field - re-armed right below
+  app.screen = 'play';
+  app.tutorial.active = true;
+
+  // Pitching first: the human throws (WASD/Z), the CPU bats.
+  app.homePitching = true;
+  assignActiveRoles();
+  getPitcherFrames(pitcherChar().key);
+  getBatterFrames(batterChar().key);
+  resetBall();
+
+  showTutorialDialog([
+    "Hey, rookie! I'm Coach. Let's get you ready for the big leagues.",
+    "First up: pitching. Use these keys to pick your pitch:",
+    "W = Fastball     A = Knuckleball\nS = Curveball     D = Riser",
+    "Press Z to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!",
+    "Alright, let's see what you've got. Throw pitches until you strike the batter out!",
+  ], beginPitchPractice);
+}
+
+function beginPitchPractice() {
+  app.tutorial.practiceStep = 'pitch';
+  app.tutorial.forceWhiffCpuBatter = true;
+  app.tutorial.forceStrikeOnBall = true;
+}
+
+function beginBattingEasy() {
+  app.tutorial.forceWhiffCpuBatter = false;
+  app.tutorial.forceStrikeOnBall = false;
+
+  // Switch roles without touching score/innings: now the CPU pitches and the
+  // human bats - same as a real solo match's default starting configuration.
+  app.homePitching = false;
+  assignActiveRoles();
+  getPitcherFrames(pitcherChar().key);
+  getBatterFrames(batterChar().key);
+  clearCounts(true);
+  resetBall();
+
+  app.tutorial.practiceStep = 'bat_easy';
+  // Bug fix: Knuckleball isn't actually a straight line - it's genuinely
+  // chaotic, randomly bouncing up/down most of the way to the plate before
+  // correcting into the zone (see the chaos-phase step logic gated on
+  // KNUCKLE_CHAOS_END_X). EFastball is a real straight, slow, predictable
+  // pitch - the "really easy, straight line" starter this drill promises.
+  app.tutorial.forcedPitch = 'EFastball';
+  app.tutorial.awaitingContact = true;
+}
+
+function beginBattingMedium() {
+  clearCounts(true);
+  resetBall();
+  app.tutorial.practiceStep = 'bat_medium';
+  app.tutorial.forcedPitch = 'Fastball'; // faster, with a touch of rise - one notch harder than dead-straight
+  app.tutorial.awaitingContact = true;
+}
+
+function beginBattingFull() {
+  clearCounts(true);
+  resetBall();
+  app.tutorial.practiceStep = 'bat_full';
+  app.tutorial.forcedPitch = null; // let the real Easy-difficulty CPU pitcher roll its own pitches
+  app.tutorial.awaitingContact = false; // this at-bat's real strike/ball/hit/out outcomes all count
+  // Defensively clear the pitching-drill flags rather than relying on
+  // beginBattingEasy() (earlier in the script) having already done so - a
+  // real strikeout/walk/out must be able to fire normally here.
+  app.tutorial.forceWhiffCpuBatter = false;
+  app.tutorial.forceStrikeOnBall = false;
+}
+
+function finishTutorial() {
+  quitToModeSelect();
+}
+
+// Checked once per tick from update(): watches for the flags the hooks
+// above set once a scripted drill's objective has actually been met, and
+// advances to the next beat of the script.
+function stepTutorial() {
+  const t = app.tutorial;
+  if (!t.active) return;
+  // Opening a dialog freezes update() (including stepCallBanner()) on the
+  // very next tick - if a call banner (e.g. the final "Strike") was still
+  // sliding across the screen, it would get stuck mid-animation and only
+  // finish once the dialog closes again, reading as the banner popping up
+  // out of nowhere right as the text ends. Wait for it to finish first.
+  if (app.callActive) return;
+
+  if (t.pitchingStrikeoutDone) {
+    t.pitchingStrikeoutDone = false;
+    showTutorialDialog([
+      "Strikeout! Beautiful pitching, rookie!",
+      "Now let's work on your batting. Move your mouse to slide the crosshair around, and try to anticipate where the pitch will end up.",
+      "When the ball enters your crosshair, click to swing. Timing is everything!",
+      "Let's start easy: a slow, straight pitch right down the middle. Take your time.",
+    ], beginBattingEasy);
+    return;
+  }
+
+  if (t.contactMade) {
+    t.contactMade = false;
+    if (t.practiceStep === 'bat_easy') {
+      showTutorialDialog(["Nice contact! Let's kick it up a notch."], beginBattingMedium);
+    } else if (t.practiceStep === 'bat_medium') {
+      showTutorialDialog([
+        "Great swing! Now let's put it all together: one real at-bat against an easy-mode pitcher.",
+        "Good luck out there!",
+      ], beginBattingFull);
+    }
+    return;
+  }
+
+  if (t.atBatResolved) {
+    t.atBatResolved = false;
+    showTutorialDialog([
+      "That's the at-bat! You've got the fundamentals down.",
+      "Now get out there and be a Hero!",
+    ], finishTutorial);
+  }
+}
+
+// Splits str into as many lines as fit within maxWidth (measured with the
+// same font text() itself uses), respecting any explicit '\n' as a forced
+// line break within a paragraph (used to pin specific words to their own
+// line - e.g. the pitch-controls dialog forces Curveball/Riser onto a
+// second line regardless of how wide the panel is).
+function computeWrappedLines(str, maxWidth, size, weight) {
+  const lines = [];
+  str.split('\n').forEach(paragraph => {
+    let line = '';
+    paragraph.split(' ').forEach(w => {
+      const test = line ? line + ' ' + w : w;
+      if (line && textWidth(test, size, weight) > maxWidth) {
+        lines.push(line);
+        line = w;
+      } else {
+        line = test;
+      }
+    });
+    lines.push(line);
+  });
+  return lines;
+}
+
+// Bug fix: lineHeight used to be a flat, unscaled pixel value (28) while the
+// font itself renders at toLen(size) (text()'s own convention) - for size 20
+// that's a ~36px-tall font squeezed into 28px of vertical space, so
+// descenders/ascenders on wrapped lines visibly overlapped the line above/
+// below (e.g. the "p" in "special" colliding with "ONE" on the next line).
+// Deriving lineHeight from the same toLen(size) the font actually renders at
+// guarantees enough room between lines no matter the font size used.
+function wrapTutorialText(str, x, y, maxWidth, size, weight) {
+  const lineHeight = toLen(size) * 1.35;
+  const lines = computeWrappedLines(str, maxWidth, size, weight);
+  lines.forEach((l, i) => text(l, x, y + i * lineHeight, size, 'white', 1, 'left', weight));
+}
+
+function drawTutorialOverlay() {
+  const t = app.tutorial;
+  if (!t.active || t.dialogLines.length === 0) return;
+
+  rect(0, 0, CANVAS_W, CANVAS_H, 'black', 0.55);
+
+  const naturalW = COACH_IMG.naturalWidth || 832, naturalH = COACH_IMG.naturalHeight || 1280;
+  const coachH = 420;
+  const coachW = coachH * (naturalW / naturalH);
+  const coachX = 10;
+  const coachY = CANVAS_H - coachH + 30; // feet crop slightly off the bottom edge - reads as "walked into frame"
+  if (COACH_IMG.complete && COACH_IMG.naturalWidth) {
+    ctx.drawImage(COACH_IMG, coachX, coachY, coachW, coachH);
+  }
+
+  const textSize = 20, textWeight = 700;
+  const panelX = coachX + coachW - 15;
+  const panelW = CANVAS_W - panelX - 40;
+  const textTopPad = 68, bottomPad = 44;
+  const lineHeight = toLen(textSize) * 1.35;
+  // Panel height is derived from however many lines this message actually
+  // wraps/breaks into, rather than a fixed guess - guarantees room for the
+  // text no matter how long a given line is.
+  const lineCount = computeWrappedLines(t.dialogLines[0], panelW - 52, textSize, textWeight).length;
+  const panelH = Math.max(200, textTopPad + lineCount * lineHeight + bottomPad);
+  const panelY = CANVAS_H - panelH - 30;
+
+  rect(panelX, panelY, panelW, panelH, 'rgba(20,20,26,0.95)', 1, 'gold', 3);
+  text('COACH', panelX + 26, panelY + 30, 16, 'gold', 1, 'left', 900);
+
+  wrapTutorialText(t.dialogLines[0], panelX + 26, panelY + textTopPad, panelW - 52, textSize, textWeight);
+
+  text('Click or press any key to continue ▶', panelX + panelW - 24, panelY + panelH - 22, 13, '#cccccc', 0.9, 'right', 600);
+}
+
 /* ============================== INPUT: GAMEPLAY ============================== */
 function canStartPitch() {
   // Bug fix (requested): a new pitch may never be started while any powerup
@@ -1596,7 +1944,7 @@ function canStartPitch() {
     && !app.isPitching && !app.powerUpActive;
 }
 
-function handleGameplayKey(key) {
+function handleGameplayKey(key, repeat) {
   // While the quit confirmation is up, it owns all keyboard input - nothing
   // else (swinging, pitching, fire tune mode, ...) should react to a
   // keypress meant to answer the dialog.
@@ -1608,6 +1956,16 @@ function handleGameplayKey(key) {
     if (key === 'enter') { if (app.quitConfirmIndex === 0) quitToModeSelect(); else closeQuitConfirmAndResume(); return; }
     if (key === 'y') quitToModeSelect();
     else if (key === 'escape' || key === 'n') closeQuitConfirmAndResume();
+    return;
+  }
+  // While Coach is talking, any key (other than Escape, which still opens
+  // the normal quit confirmation) advances to the next line instead of
+  // reaching pitching/swinging/fire-tune below. Only a genuine keypress
+  // advances it - the browser's own auto-repeat while a key is held would
+  // otherwise blow through several lines in one held press.
+  if (app.tutorial.active && app.tutorial.dialogLines.length > 0) {
+    if (key === 'escape') { openQuitConfirm(); return; }
+    if (!repeat) advanceTutorialDialog();
     return;
   }
   if (key === 'escape') { openQuitConfirm(); return; }
@@ -1818,6 +2176,9 @@ function handlePointerDown(x, y) {
     else if (pointInQuitNoButton(x, y)) closeQuitConfirmAndResume();
     return;
   }
+  // Click anywhere to advance Coach's dialogue - matches the "any key"
+  // behavior in handleGameplayKey().
+  if (app.tutorial.active && app.tutorial.dialogLines.length > 0) { advanceTutorialDialog(); return; }
   if (IS_MOBILE) { handleMobilePlayTap(x, y); return; }
   if (app.activeBatterKey === 'cpu') return;
   if (x > toX(250)) attemptSwing();
@@ -1900,13 +2261,16 @@ function handleModeClick(x, y) {
     return;
   }
   if (x >= toX(125) && x <= toX(275) && y >= toY(250) && y <= toY(330)) {
-    app.modeSelectIndex = 1;
+    app.modeSelectIndex = 2;
     app.mode = 'versus'; app.screen = 'characterVersus';
     randomizeCharacterCursor('versus');
-  } else if (x >= toX(125) && x <= toX(275) && y >= toY(70) && y <= toY(150)) {
-    app.modeSelectIndex = 0;
+  } else if (x >= toX(125) && x <= toX(275) && y >= toY(160) && y <= toY(240)) {
+    app.modeSelectIndex = 1;
     app.mode = 'solo'; app.screen = 'characterSolo';
     randomizeCharacterCursor('solo');
+  } else if (x >= toX(125) && x <= toX(275) && y >= toY(70) && y <= toY(150)) {
+    app.modeSelectIndex = 0;
+    startTutorial();
   }
 }
 
@@ -1991,14 +2355,18 @@ function drawModeSelect() {
 
   rect(toX(125), toY(70), lenX(150), toLen(80), 'gold', 1,
     app.modeSelectIndex === 0 ? 'white' : null, 5);
-  text('Solo', toX(200), toY(110), 46, '#222', 1, 'center', 900);
+  text('Tutorial', toX(200), toY(110), 30, '#222', 1, 'center', 900);
+
+  rect(toX(125), toY(160), lenX(150), toLen(80), 'gold', 1,
+    app.modeSelectIndex === 1 ? 'white' : null, 5);
+  text('Solo', toX(200), toY(200), 46, '#222', 1, 'center', 900);
 
   rect(toX(125), toY(250), lenX(150), toLen(80), 'gold', 1,
-    app.modeSelectIndex === 1 ? 'white' : null, 5);
+    app.modeSelectIndex === 2 ? 'white' : null, 5);
   text('2 Player', toX(200), toY(290), 32, '#222', 1, 'center', 900);
 
   // Cursor: a pointer arrow beside whichever option is currently selected
-  const cursorY = app.modeSelectIndex === 0 ? 110 : 290;
+  const cursorY = app.modeSelectIndex === 0 ? 110 : app.modeSelectIndex === 1 ? 200 : 290;
   text('▶', toX(115), toY(cursorY), 34, 'white', 1, 'right', 900);
   text('Up / Down · Enter To Select', CANVAS_W / 2, toY(360), 16, 'white', 0.85, 'center', 700);
 }
@@ -2792,7 +3160,8 @@ function drawGameplay() {
   drawFireTuneOverlay();
   drawPauseAnim();
   if (IS_MOBILE) drawMobileControls();
-  drawQuitConfirm(); // on top of absolutely everything, including Pause's own freeze overlay
+  drawTutorialOverlay(); // Coach's dialogue box, dims the scene while a line is up
+  drawQuitConfirm(); // on top of absolutely everything, including Pause's own freeze overlay and Coach
 }
 
 // Pause power-up: while the drag animation plays out (see stepPauseAnim()),
@@ -3034,6 +3403,13 @@ function resolveHit() {
     // every swing, hit or miss - see attemptSwing()) - it erupts into an
     // actual cheer layered on top of the ambient loop.
     playSound(SOUNDS.crowdCheer);
+    // Tutorial batting drills (bat_easy/bat_medium) only care that contact
+    // happened at all, not what it turns into (single/double/ground out) -
+    // see stepTutorial().
+    if (app.tutorial.active && app.tutorial.awaitingContact) {
+      app.tutorial.awaitingContact = false;
+      app.tutorial.contactMade = true;
+    }
   }
   if (critHit || fireHit) {
     ball.accel = -toLen(0.2);
@@ -3497,6 +3873,14 @@ function update() {
   // Escape-to-quit confirmation is up - freeze the entire scene (ball, CPU,
   // any in-flight animation) exactly where it is until the player answers.
   if (app.showQuitConfirm) return;
+
+  // Checks flags set (on a previous tick) by the tutorial's forced-outcome
+  // hooks and, if a drill objective was just met, opens Coach's next line -
+  // see stepTutorial().
+  stepTutorial();
+  // Coach's dialogue box freezes the whole scene while it's up, exactly like
+  // the quit-confirm modal above - see drawTutorialOverlay().
+  if (app.tutorial.active && app.tutorial.dialogLines.length > 0) return;
 
   // Pause's drag animation freezes everything else while it plays out -
   // only advance the animation itself and skip the rest of this tick.
