@@ -737,6 +737,12 @@ const app = {
     pitchHintShown: false, // true once either the "press W" nudge has fired, or it's no longer needed
     battingMissCount: 0, // consecutive whiffs in the current batting drill
     battingHintShown: false, // true once this drill's crosshair-timing hint has fired
+    // Typewriter reveal for whichever line is current (see stepTutorial()'s
+    // per-tick increment and drawTutorialOverlay()'s partial draw) - how
+    // many characters of dialogLines[0] are shown so far. Reset to 0 by
+    // showTutorialDialog() and by advanceTutorialDialog() every time the
+    // line actually changes.
+    revealProgress: 0,
   },
 
   fireTuneActive: false, // debug: live fire-trail alignment tuning (press F)
@@ -1752,22 +1758,33 @@ function beginGame() {
 function showTutorialDialog(lines, onDone) {
   app.tutorial.dialogLines = lines.slice();
   app.tutorial.onDialogDone = onDone || null;
+  app.tutorial.revealProgress = 0; // first line starts typing in from scratch
 }
 
+// The tutorial is set up and its first dialogue line is already showing
+// before any input happens (see startTutorial()'s own comment - it runs
+// immediately at load, with no menu screen first), but gameplayStart()
+// itself has to wait for the player's actual first input per Poki's rules.
+// Any real interaction with Coach's dialogue box - whether it fills in the
+// currently-typing line or advances past a finished one - IS that first
+// input. Already guarded (no-ops if already active), so it's safe to call
+// unconditionally here regardless of which branch below runs.
 function advanceTutorialDialog() {
-  // The tutorial is set up and its first dialogue line is already showing
-  // before any input happens (see startTutorial()'s own comment - it runs
-  // immediately at load, with no menu screen first), but gameplayStart()
-  // itself has to wait for the player's actual first input per Poki's
-  // rules. Dismissing/advancing Coach's dialogue - the very first thing a
-  // player can do - IS that first input. Already guarded (no-ops if
-  // already active), so it's safe to call unconditionally on every advance,
-  // not just the first.
   pokiGameplayStart();
-  app.tutorial.dialogLines.shift();
-  if (app.tutorial.dialogLines.length === 0) {
-    const onDone = app.tutorial.onDialogDone;
-    app.tutorial.onDialogDone = null;
+  const t = app.tutorial;
+  const fullLen = t.dialogLines[0] ? t.dialogLines[0].length : 0;
+  if (t.revealProgress < fullLen) {
+    // Still typing in - this press just fills in the rest immediately
+    // instead of advancing, so an impatient player never has to sit through
+    // the reveal animation to find out it's not done yet.
+    t.revealProgress = fullLen;
+    return;
+  }
+  t.dialogLines.shift();
+  t.revealProgress = 0; // next line (if any) starts typing in from scratch
+  if (t.dialogLines.length === 0) {
+    const onDone = t.onDialogDone;
+    t.onDialogDone = null;
     if (onDone) onDone();
   }
 }
@@ -1881,6 +1898,8 @@ function finishTutorial() {
 // Checked once per tick from update(): watches for the flags the hooks
 // above set once a scripted drill's objective has actually been met, and
 // advances to the next beat of the script.
+const TYPEWRITER_TICKS_PER_CHAR = 1.5; // ~27 chars/sec at 40 ticks/sec
+
 function stepTutorial() {
   const t = app.tutorial;
   if (!t.active) return;
@@ -1890,6 +1909,14 @@ function stepTutorial() {
   // finish once the dialog closes again, reading as the banner popping up
   // out of nowhere right as the text ends. Wait for it to finish first.
   if (app.callActive) return;
+
+  // Typewriter reveal for whatever line is currently up - runs even while
+  // update() itself is otherwise frozen for the dialogue (stepTutorial()
+  // is called before that freeze check), so the animation actually
+  // progresses instead of never moving.
+  if (t.dialogLines.length > 0 && t.revealProgress < t.dialogLines[0].length) {
+    t.revealProgress += 1 / TYPEWRITER_TICKS_PER_CHAR;
+  }
 
   if (t.pitchingStrikeoutDone) {
     t.pitchingStrikeoutDone = false;
@@ -2005,10 +2032,17 @@ function computeWrappedLines(str, maxWidth, size, weight) {
 // below (e.g. the "p" in "special" colliding with "ONE" on the next line).
 // Deriving lineHeight from the same toLen(size) the font actually renders at
 // guarantees enough room between lines no matter the font size used.
-function wrapTutorialText(str, x, y, maxWidth, size, weight) {
+// Draws pre-wrapped lines up to revealCount total characters (typewriter
+// effect) - takes the already-wrapped array rather than wrapping its own
+// copy, so the reveal can never cause a word to jump to a different line
+// mid-animation than where it'll actually end up once fully shown.
+function wrapTutorialText(lines, x, y, size, weight, revealCount) {
   const lineHeight = toLen(size) * 1.35;
-  const lines = computeWrappedLines(str, maxWidth, size, weight);
-  lines.forEach((l, i) => text(l, x, y + i * lineHeight, size, 'white', 1, 'left', weight));
+  let remaining = revealCount;
+  for (let i = 0; i < lines.length && remaining > 0; i++) {
+    text(lines[i].slice(0, remaining), x, y + i * lineHeight, size, 'white', 1, 'left', weight);
+    remaining -= lines[i].length + 1; // +1 for the space/break consumed between wrapped lines
+  }
 }
 
 function drawTutorialOverlay() {
@@ -2031,19 +2065,25 @@ function drawTutorialOverlay() {
   const panelW = CANVAS_W - panelX - 40;
   const textTopPad = 68, bottomPad = 44;
   const lineHeight = toLen(textSize) * 1.35;
-  // Panel height is derived from however many lines this message actually
-  // wraps/breaks into, rather than a fixed guess - guarantees room for the
-  // text no matter how long a given line is.
-  const lineCount = computeWrappedLines(t.dialogLines[0], panelW - 52, textSize, textWeight).length;
-  const panelH = Math.max(200, textTopPad + lineCount * lineHeight + bottomPad);
+  // Wrapped once against the FULL line (not however much is revealed so
+  // far) so the panel height and each word's line placement stay fixed for
+  // the whole reveal instead of resizing/reflowing as text types in.
+  const wrappedLines = computeWrappedLines(t.dialogLines[0], panelW - 52, textSize, textWeight);
+  const panelH = Math.max(200, textTopPad + wrappedLines.length * lineHeight + bottomPad);
   const panelY = CANVAS_H - panelH - 30;
 
   rect(panelX, panelY, panelW, panelH, 'rgba(20,20,26,0.95)', 1, 'gold', 3);
   text('COACH', panelX + 26, panelY + 30, 16, 'gold', 1, 'left', 900);
 
-  wrapTutorialText(t.dialogLines[0], panelX + 26, panelY + textTopPad, panelW - 52, textSize, textWeight);
+  const revealCount = Math.floor(t.revealProgress);
+  wrapTutorialText(wrappedLines, panelX + 26, panelY + textTopPad, textSize, textWeight, revealCount);
 
-  text(IS_MOBILE ? 'Tap to continue ▶' : 'Click or press any key to continue ▶', panelX + panelW - 24, panelY + panelH - 22, 13, '#cccccc', 0.9, 'right', 600);
+  const fullyRevealed = revealCount >= t.dialogLines[0].length;
+  text(
+    fullyRevealed
+      ? (IS_MOBILE ? 'Tap to continue ▶' : 'Click or press any key to continue ▶')
+      : (IS_MOBILE ? 'Tap to skip ▶' : 'Click or press any key to skip ▶'),
+    panelX + panelW - 24, panelY + panelH - 22, 13, '#cccccc', 0.9, 'right', 600);
 }
 
 /* ============================== INPUT: GAMEPLAY ============================== */
