@@ -130,8 +130,9 @@ function menuCharacterImage(key) {
   return (img.complete && img.naturalWidth) ? img : portraits[key];
 }
 
-// The tutorial's guide - a small non-blocking Coach caption shown alongside
-// real, still-playable gameplay. See drawTutorialCaption().
+// The tutorial's dialogue-box guide - a coach character who "walks in" over
+// a dimmed screen whenever there's instructional text to show. See
+// drawTutorialOverlay().
 const COACH_IMG = loadImage(PORTRAITS + 'coach_tutorial.png');
 
 /* ============================== MENU SCREEN DRESSING ============================== */
@@ -711,31 +712,36 @@ const app = {
   batFireVisible: false,
 
   // Interactive tutorial (see startTutorial()/stepTutorial()/
-  // drawTutorialCaption()). Reuses the real 'play' screen and gameplay code
-  // paths throughout - practiceStep just gates a handful of surgical hooks
-  // (forced CPU behavior, forced pitch selection, progress detection)
-  // sprinkled through the normal rules functions, rather than duplicating
-  // the whole game loop. Unlike the old version, Coach's caption never
-  // blocks update() - the player can pitch/bat/swing for real while it's
-  // up, and each caption clears once the player actually does the thing
-  // it's asking for (see currentTutorialCaption()), not by clicking through it.
+  // drawTutorialOverlay()). Reuses the real 'play' screen and gameplay code
+  // paths throughout - active/practiceStep/dialogLines just gate a handful
+  // of surgical hooks (forced CPU behavior, forced pitch selection, progress
+  // detection) sprinkled through the normal rules functions, rather than
+  // duplicating the whole game loop.
   tutorial: {
     active: false,
-    // null | 'pitch' | 'bat_frozen_move' | 'bat_frozen_swing' | 'bat_powerup' | 'bat_real'
-    practiceStep: null,
+    practiceStep: null, // null | 'pitch' | 'bat_easy' | 'bat_medium' | 'bat_full'
+    dialogLines: [], // remaining lines of the current Coach dialogue; drawTutorialOverlay() shows dialogLines[0]
+    onDialogDone: null, // called once the last line in dialogLines has been advanced past
     forcedPitch: null, // when set, cpuPitch() throws exactly this pitch instead of rolling one
     forceWhiffCpuBatter: false, // pitching practice: the CPU batter never makes contact
     forceStrikeOnBall: false, // pitching practice: every pitch counts as a Strike, never a Ball
+    awaitingContact: false, // batting practice: waiting for the player to make contact
+    contactMade: false, // set by resolveHit() once contact happens during awaitingContact
     pitchingStrikeoutDone: false, // set once the scripted pitching drill's strikeout lands
-    atBatResolved: false, // set once the closing real pitch concludes (hit/walk/out)
-    // 'pitch' step's caption covers 3 points at once (throw, other pitches,
-    // power-up) but only has one real action to gate on (throwing a pitch) -
-    // once that's happened the caption should disappear even though
-    // practiceStep stays 'pitch' for the rest of the scripted strikeout.
-    pitchCaptionDone: false,
-    // Typewriter reveal for whatever currentTutorialCaption() currently
-    // returns - purely cosmetic now (nothing blocks on it), reset to 0
-    // every time the step (and therefore the caption text) changes.
+    atBatResolved: false, // set once the closing full at-bat concludes (hit/walk/out)
+    // Stuck-player safety nets (see stepTutorial()) - batting timing is a
+    // real skill unlike pitching (any keypress is valid there), so without
+    // these a player who doesn't understand the crosshair can whiff the
+    // same forced pitch forever with zero feedback.
+    pitchIdleTicks: 0, // ticks since pitch practice began with no pitch thrown yet
+    pitchHintShown: false, // true once either the "press W" nudge has fired, or it's no longer needed
+    battingMissCount: 0, // consecutive whiffs in the current batting drill
+    battingHintShown: false, // true once this drill's crosshair-timing hint has fired
+    // Typewriter reveal for whichever line is current (see stepTutorial()'s
+    // per-tick increment and drawTutorialOverlay()'s partial draw) - how
+    // many characters of dialogLines[0] are shown so far. Reset to 0 by
+    // showTutorialDialog() and by advanceTutorialDialog() every time the
+    // line actually changes.
     revealProgress: 0,
   },
 
@@ -845,6 +851,17 @@ function resetBall() {
     app.smallBatActive = false;
     crosshairRadius = toLen(11);
     criticalRadius = toLen(3.5);
+  }
+  // Tutorial batting drills (bat_easy/bat_medium) repeat the same forced
+  // pitch until the player makes contact - wiping the strike/ball dots every
+  // time a pitch resolves without contact means a called strike/ball can
+  // never accumulate into a real strikeout/walk and end the drill early.
+  // Reaching here with awaitingContact still true also means this pitch
+  // came and went with no contact - i.e. a whiff - see stepTutorial()'s
+  // hint/auto-pass safety net.
+  if (app.tutorial.active && app.tutorial.awaitingContact) {
+    clearCounts(true);
+    app.tutorial.battingMissCount++;
   }
 }
 
@@ -1164,7 +1181,7 @@ function recordBaseHit() {
   // Tutorial's closing full at-bat (bat_full) ends on whatever the at-bat's
   // outcome turns out to be - a hit is one of the three ways it can conclude
   // (alongside a walk in forceWalk() and an out in recordOut()).
-  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_real') app.tutorial.atBatResolved = true;
+  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_full') app.tutorial.atBatResolved = true;
   if (app.voidActive) { ball.visible = true; app.voidActive = false; }
   clearPowerupVisuals();
 
@@ -1213,7 +1230,7 @@ function recordOut() {
   playSound(SOUNDS.out);
   // Tutorial's closing full at-bat ends on an out just as validly as a hit or
   // walk - see the matching hook in recordBaseHit()/forceWalk().
-  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_real') app.tutorial.atBatResolved = true;
+  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_full') app.tutorial.atBatResolved = true;
   // Every out ends that batter's plate appearance, including a Ground Out
   // reached via contact (see the ball.y >= toY(300) ground-bounce check in
   // update(), which calls recordOut() directly) - Future Sight must clear
@@ -1298,7 +1315,7 @@ function recordStrike() {
 }
 
 function forceWalk() {
-  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_real') app.tutorial.atBatResolved = true;
+  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_full') app.tutorial.atBatResolved = true;
   showCallBanner('Walk');
   ballFills[0] = ballFills[1] = ballFills[2] = ballFills[3] = 'dimgray';
   for (let j = 0; j < 3; j++) {
@@ -1467,10 +1484,10 @@ function cpuSwing() {
 }
 
 function cpuPitch() {
-  // Tutorial's batting steps (bat_frozen_move/bat_frozen_swing/bat_real)
-  // script an exact EFastball instead of the CPU's normal random selection -
-  // the frozen demo needs a predictable straight pitch to freeze in place,
-  // and the closing real pitch is deliberately the same easy, fair throw.
+  // Tutorial batting drills (bat_easy/bat_medium) script an exact pitch
+  // instead of the CPU's normal random selection, so the difficulty ramps up
+  // exactly the way the drill promises. bat_full leaves forcedPitch null and
+  // falls through to the real Easy-difficulty roll below.
   if (app.tutorial.active && app.tutorial.forcedPitch) {
     app.pitch = app.tutorial.forcedPitch;
     app.isPitching = true;
@@ -1505,7 +1522,6 @@ window.addEventListener('keydown', e => {
   // either.
   if (pokiBreakPending) return;
   ensureMusicStarted();
-  pokiGameplayStart(); // idempotent - the tutorial's own gameplayStart() no longer fires via a dialogue-advance, so this is the real "player's first input" hook now
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
   if (app.screen === 'mode') { handleModeSelectKey(key); return; }
 
@@ -1522,7 +1538,7 @@ window.addEventListener('keydown', e => {
     return;
   }
   if (app.screen === 'play') {
-    handleGameplayKey(key);
+    handleGameplayKey(key, e.repeat);
   }
 });
 
@@ -1589,13 +1605,15 @@ function resetMatchState() {
   // tutorial fully off; startTutorial() re-arms it right after this returns.
   app.tutorial.active = false;
   app.tutorial.practiceStep = null;
+  app.tutorial.dialogLines = [];
+  app.tutorial.onDialogDone = null;
   app.tutorial.forcedPitch = null;
   app.tutorial.forceWhiffCpuBatter = false;
   app.tutorial.forceStrikeOnBall = false;
+  app.tutorial.awaitingContact = false;
+  app.tutorial.contactMade = false;
   app.tutorial.pitchingStrikeoutDone = false;
   app.tutorial.atBatResolved = false;
-  app.tutorial.pitchCaptionDone = false;
-  app.tutorial.revealProgress = 0;
 }
 
 function quitToModeSelect() {
@@ -1729,67 +1747,63 @@ function beginGame() {
    code paths (pitching, batting, CPU AI, scoring) rather than a separate
    mock-up - see the app.tutorial state block for what each flag gates, and
    the surgical hooks in resetBall()/recordBall()/recordOut()/forceWalk()/
-   recordBaseHit()/resolveHit()/attemptSwing()/cpuSwing()/cpuPitch()/the M-key
-   handler for how the drills force guaranteed outcomes and detect when the
-   player has cleared a step.
+   recordBaseHit()/resolveHit()/cpuSwing()/cpuPitch() for how the drills
+   force guaranteed outcomes and detect when the player has cleared a step.
+   update() calls stepTutorial() every tick and freezes gameplay (exactly
+   like the quit-confirm modal already does) while a dialogue line is up. */
 
-   Unlike an earlier version of this tutorial, Coach's caption never blocks
-   update() - the player can genuinely pitch/bat/swing/use their power-up
-   while it's showing, and every caption clears itself once the player
-   actually does the thing it's asking for (see currentTutorialCaption() and
-   stepTutorial()), not by clicking/tapping through a dialogue queue. */
+// Shows Coach's dialogue box with the given lines (one at a time, advanced
+// by any keypress/click - see advanceTutorialDialog()); onDone runs once the
+// player has clicked/pressed past the last line.
+function showTutorialDialog(lines, onDone) {
+  app.tutorial.dialogLines = lines.slice();
+  app.tutorial.onDialogDone = onDone || null;
+  app.tutorial.revealProgress = 0; // first line starts typing in from scratch
+}
 
-// The X the ball is forced to stop at during the batting frozen-ball demo -
-// clearly out in front of the batter (who stands around x:325-335), close
-// enough to the default crosshair rest position (x:325) that "move onto it"
-// reads as a small, obvious adjustment rather than a hunt across the screen.
-const FROZEN_BALL_X = toX(300);
-const FROZEN_BALL_Y = toY(277); // dead center of the strike zone (265-290)
-const TYPEWRITER_TICKS_PER_CHAR = 1.5; // ~27 chars/sec at 40 ticks/sec
-
-// The text (if any) Coach's caption should currently show - computed fresh
-// from practiceStep rather than stored, so there's exactly one source of
-// truth for "what does this step's caption say" shared by stepTutorial()
-// (which needs its length, for the typewriter reveal) and
-// drawTutorialCaption() (which needs the text itself). '' means no caption
-// should be showing at all right now.
-function currentTutorialCaption() {
+// The tutorial is set up and its first dialogue line is already showing
+// before any input happens (see startTutorial()'s own comment - it runs
+// immediately at load, with no menu screen first), but gameplayStart()
+// itself has to wait for the player's actual first input per Poki's rules.
+// Any real interaction with Coach's dialogue box - whether it fills in the
+// currently-typing line or advances past a finished one - IS that first
+// input. Already guarded (no-ops if already active), so it's safe to call
+// unconditionally here regardless of which branch below runs.
+function advanceTutorialDialog() {
+  pokiGameplayStart();
   const t = app.tutorial;
-  if (t.practiceStep === 'pitch') {
-    if (t.pitchCaptionDone) return '';
-    return IS_MOBILE
-      ? "Tap a pitch button below to throw! Tap the power-up icon anytime for your special pitch - just once per inning."
-      : "Press W/A/S/D to throw a pitch - try Fastball (W) first! Press Z anytime for your power-up pitch, once per inning.";
+  const fullLen = t.dialogLines[0] ? t.dialogLines[0].length : 0;
+  if (t.revealProgress < fullLen) {
+    // Still typing in - this press just fills in the rest immediately
+    // instead of advancing, so an impatient player never has to sit through
+    // the reveal animation to find out it's not done yet.
+    t.revealProgress = fullLen;
+    return;
   }
-  if (t.practiceStep === 'bat_frozen_move') {
-    return IS_MOBILE
-      ? "Nice strikeout! Now let's bat - use the joystick to move your circle onto the ball."
-      : "Nice strikeout! Now let's bat - move your crosshair onto the ball.";
+  t.dialogLines.shift();
+  t.revealProgress = 0; // next line (if any) starts typing in from scratch
+  if (t.dialogLines.length === 0) {
+    const onDone = t.onDialogDone;
+    t.onDialogDone = null;
+    if (onDone) onDone();
   }
-  if (t.practiceStep === 'bat_frozen_swing') {
-    return IS_MOBILE ? "Now tap SWING!" : "Now swing!";
-  }
-  if (t.practiceStep === 'bat_powerup') {
-    return IS_MOBILE ? "Now tap the power-up icon to try your power-up!" : "Now press M to try your power-up!";
-  }
-  if (t.practiceStep === 'bat_real') {
-    return "Here comes a real pitch - good luck!";
-  }
-  return '';
 }
 
 // Called immediately at load (see the bottom of this file) instead of
-// waiting on a menu screen - pitching practice's caption is already showing
-// before any input has happened. gameplayStart() deliberately does NOT fire
-// in here: Poki requires it fire on the player's actual first input, not on
-// load - it's hooked into the shared keydown/mousedown/touchstart listeners
-// instead (guarded/idempotent, same pattern as ensureMusicStarted()). Also
-// called again later to relaunch the tutorial from the mode-select menu.
+// waiting on a menu screen - Coach's first line is already showing before
+// any input has happened. gameplayStart() deliberately does NOT fire in
+// here, even though the tutorial drives the real 'play' screen/gameplay
+// code paths just like an actual match: Poki requires it fire on the
+// player's actual first input, not on load. advanceTutorialDialog() (the
+// very first thing a player can do - dismiss/advance Coach's line) is
+// where it actually fires. Also called again later to relaunch the
+// tutorial from the mode-select menu - same deferred-start behavior
+// applies then too, for consistency.
 function startTutorial() {
   app.mode = 'solo';
   app.difficultyIndex = 0;
-  // The Scientist - a clear, readable power-up demo (Time Stop) for the
-  // tutorial's batting walkthrough.
+  // The Scientist - a clear, readable power-up demo (Drone Ball) for the
+  // tutorial's pitching walkthrough.
   app.player1Index = CHARACTERS.findIndex(c => c.key === 'scientist');
   app.cpuBatterIndex = 1;
   resetMatchState(); // also zeroes out every app.tutorial field - re-armed right below
@@ -1804,24 +1818,32 @@ function startTutorial() {
   getPitcherFrames(pitcherChar().key);
   getBatterFrames(batterChar().key);
   resetBall();
-  beginPitchPractice();
+
+  // Mobile has its own on-screen pitch buttons (already labeled Fastball/
+  // Knuckleball/Curveball/Riser - see drawPitchButtons()) instead of WASD,
+  // so the keyboard-mapping line is both wrong and unnecessary there.
+  showTutorialDialog([
+    "Hey, rookie! I'm Coach. Let's get you ready for the big leagues.",
+    IS_MOBILE
+      ? "First up: pitching. Tap a button to pick your pitch."
+      : "First up: pitching. Use these keys to pick your pitch:",
+    ...(IS_MOBILE ? [] : ["W = Fastball     A = Knuckleball\nS = Curveball     D = Riser"]),
+    IS_MOBILE
+      ? "Tap the power-up icon to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!"
+      : "Press Z to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!",
+    "Alright, let's see what you've got. Throw pitches until you strike the batter out!",
+  ], beginPitchPractice);
 }
 
 function beginPitchPractice() {
   app.tutorial.practiceStep = 'pitch';
   app.tutorial.forceWhiffCpuBatter = true;
   app.tutorial.forceStrikeOnBall = true;
-  app.tutorial.pitchCaptionDone = false;
-  app.tutorial.revealProgress = 0;
+  app.tutorial.pitchIdleTicks = 0;
+  app.tutorial.pitchHintShown = false;
 }
 
-// First half of batting: the pitch stops dead in front of the batter and
-// the rest of the scene dims a touch (see drawGameplay()'s dim + the
-// FROZEN_BALL_X freeze in update()) so the very first swing is guaranteed
-// contact once the crosshair's actually on the ball - a clean, un-missable
-// demo of the two moves (aim, then swing) before any real timing is asked
-// of the player.
-function beginBattingFrozen() {
+function beginBattingEasy() {
   app.tutorial.forceWhiffCpuBatter = false;
   app.tutorial.forceStrikeOnBall = false;
 
@@ -1834,80 +1856,149 @@ function beginBattingFrozen() {
   clearCounts(true);
   resetBall();
 
-  app.tutorial.practiceStep = 'bat_frozen_move';
-  app.tutorial.revealProgress = 0;
+  app.tutorial.practiceStep = 'bat_easy';
   // Bug fix: Knuckleball isn't actually a straight line - it's genuinely
   // chaotic, randomly bouncing up/down most of the way to the plate before
-  // correcting into the zone. EFastball is a real straight, slow,
-  // predictable pitch - exactly what a frozen "here's where it'll stop"
-  // demo needs.
+  // correcting into the zone (see the chaos-phase step logic gated on
+  // KNUCKLE_CHAOS_END_X). EFastball is a real straight, slow, predictable
+  // pitch - the "really easy, straight line" starter this drill promises.
   app.tutorial.forcedPitch = 'EFastball';
-  // Deliberately off the ball's eventual frozen spot, so "move it onto the
-  // ball" is a real action instead of already being satisfied by wherever
-  // the mouse/joystick happened to be resting.
-  crosshairX = toX(200);
-  crosshairY = toY(200);
+  app.tutorial.awaitingContact = true;
+  app.tutorial.battingMissCount = 0;
+  app.tutorial.battingHintShown = false;
 }
 
-// Second half: one real pitch, real timing, no forced outcome - whatever it
-// resolves as (hit/strike/ball/out) ends the tutorial. Triggered once the
-// player actually uses their power-up (see the M-key handler).
-function beginBattingReal() {
+function beginBattingMedium() {
   clearCounts(true);
   resetBall();
-  app.tutorial.practiceStep = 'bat_real';
-  app.tutorial.revealProgress = 0;
-  app.tutorial.forcedPitch = 'EFastball'; // slow and straight - a fair first real attempt, not a curveball
+  app.tutorial.practiceStep = 'bat_medium';
+  app.tutorial.forcedPitch = 'Fastball'; // faster, with a touch of rise - one notch harder than dead-straight
+  app.tutorial.awaitingContact = true;
+  app.tutorial.battingMissCount = 0;
+  app.tutorial.battingHintShown = false;
+}
+
+function beginBattingFull() {
+  clearCounts(true);
+  resetBall();
+  app.tutorial.practiceStep = 'bat_full';
+  app.tutorial.forcedPitch = null; // let the real Easy-difficulty CPU pitcher roll its own pitches
+  app.tutorial.awaitingContact = false; // this at-bat's real strike/ball/hit/out outcomes all count
+  // Defensively clear the pitching-drill flags rather than relying on
+  // beginBattingEasy() (earlier in the script) having already done so - a
+  // real strikeout/walk/out must be able to fire normally here.
+  app.tutorial.forceWhiffCpuBatter = false;
+  app.tutorial.forceStrikeOnBall = false;
 }
 
 function finishTutorial() {
   quitToModeSelect();
 }
 
-// Checked once per tick from update(): drives the typewriter reveal for
-// whatever caption is current, and watches for the flags the surgical hooks
-// elsewhere set once the player has actually done what the current step is
-// asking for, advancing the script when they have. Runs even while update()
-// itself continues normally afterward (nothing here freezes gameplay).
+// Checked once per tick from update(): watches for the flags the hooks
+// above set once a scripted drill's objective has actually been met, and
+// advances to the next beat of the script.
+const TYPEWRITER_TICKS_PER_CHAR = 1.5; // ~27 chars/sec at 40 ticks/sec
+
 function stepTutorial() {
   const t = app.tutorial;
   if (!t.active) return;
-  if (app.callActive) return; // let a call banner (Strike/Ball/...) finish sliding in first
+  // Opening a dialog freezes update() (including stepCallBanner()) on the
+  // very next tick - if a call banner (e.g. the final "Strike") was still
+  // sliding across the screen, it would get stuck mid-animation and only
+  // finish once the dialog closes again, reading as the banner popping up
+  // out of nowhere right as the text ends. Wait for it to finish first.
+  if (app.callActive) return;
 
-  const captionLen = currentTutorialCaption().length;
-  if (t.revealProgress < captionLen) t.revealProgress += 1 / TYPEWRITER_TICKS_PER_CHAR;
+  // Typewriter reveal for whatever line is currently up - runs even while
+  // update() itself is otherwise frozen for the dialogue (stepTutorial()
+  // is called before that freeze check), so the animation actually
+  // progresses instead of never moving.
+  if (t.dialogLines.length > 0 && t.revealProgress < t.dialogLines[0].length) {
+    t.revealProgress += 1 / TYPEWRITER_TICKS_PER_CHAR;
+  }
 
-  if (t.practiceStep === 'pitch') {
-    // forceStrikeOnBall makes literally any thrown pitch valid - once one's
-    // been thrown, the "press W..." caption has done its job even though
-    // practiceStep stays 'pitch' for the rest of the scripted strikeout.
-    if (!t.pitchCaptionDone && (app.isPitching || ball.visible || app.pitch)) t.pitchCaptionDone = true;
-    if (t.pitchingStrikeoutDone) {
-      t.pitchingStrikeoutDone = false;
-      beginBattingFrozen();
-    }
+  if (t.pitchingStrikeoutDone) {
+    t.pitchingStrikeoutDone = false;
+    showTutorialDialog([
+      "Strikeout! Beautiful pitching, rookie!",
+      IS_MOBILE
+        ? "Now let's work on your batting. Drag the joystick to slide the crosshair around, and try to anticipate where the pitch will end up."
+        : "Now let's work on your batting. Move your mouse to slide the crosshair around, and try to anticipate where the pitch will end up.",
+      IS_MOBILE
+        ? "When the ball enters your crosshair, tap SWING. Timing is everything!"
+        : "When the ball enters your crosshair, click to swing. Timing is everything!",
+      "Let's start easy: a slow, straight pitch right down the middle. Take your time.",
+    ], beginBattingEasy);
     return;
   }
 
-  if (t.practiceStep === 'bat_frozen_move') {
-    // Only counts once the ball has actually settled at its frozen spot -
-    // checking crosshair-to-ball distance while it's still mid-flight could
-    // false-trigger from a lucky pass-through on the way there.
-    if (ball.x >= FROZEN_BALL_X - 1 && dist(crosshairX, crosshairY, ball.x, ball.y) <= crosshairRadius) {
-      t.practiceStep = 'bat_frozen_swing';
-      t.revealProgress = 0;
+  if (t.contactMade) {
+    t.contactMade = false;
+    if (t.practiceStep === 'bat_easy') {
+      showTutorialDialog(["Nice contact! Let's kick it up a notch."], beginBattingMedium);
+    } else if (t.practiceStep === 'bat_medium') {
+      showTutorialDialog([
+        "Great swing! Now let's put it all together: one real at-bat against an easy-mode pitcher.",
+        "Good luck out there!",
+      ], beginBattingFull);
     }
     return;
   }
-
-  // bat_frozen_swing -> bat_powerup transition happens directly in
-  // attemptSwing() (the moment they actually swing, not a later tick here).
-  // bat_powerup -> bat_real happens directly in the M-key handler (the
-  // moment they actually use the power-up). Nothing to poll for either.
 
   if (t.atBatResolved) {
     t.atBatResolved = false;
-    finishTutorial();
+    showTutorialDialog([
+      "That's the at-bat! You've got the fundamentals down.",
+      "Now get out there and be a Hero!",
+    ], finishTutorial);
+    return;
+  }
+
+  // Everything below is a stuck-player nudge, not a real drill-progress
+  // check - never open one on top of a dialogue that's already up (either
+  // one just opened above, or one still being read from an earlier tick).
+  if (t.dialogLines.length > 0) return;
+
+  // Pitching practice: any keypress is a valid pitch here (forceStrikeOnBall
+  // makes every one a Strike), so a player who's thrown nothing in a while
+  // almost certainly doesn't know which key does that, not that they're
+  // thinking it over - nudge them once, after a real pause.
+  if (t.practiceStep === 'pitch' && !t.pitchHintShown) {
+    if (app.isPitching || ball.visible || app.pitch) {
+      t.pitchHintShown = true; // they've thrown one - this nudge is no longer relevant
+    } else if (++t.pitchIdleTicks >= 400) { // ~10s at 40 ticks/sec
+      t.pitchHintShown = true;
+      showTutorialDialog([
+        IS_MOBILE
+          ? "Whenever you're ready - tap the Fastball button below to throw your first pitch!"
+          : "Whenever you're ready - press W to throw your first pitch!",
+      ], null); // no onDialogDone - just a nudge, dismissing it resumes the drill right where it was
+    }
+    return;
+  }
+
+  // Batting practice: unlike pitching, this genuinely takes some timing/
+  // aim to pull off - a few misses in a row means "doesn't understand the
+  // mechanic yet," not "unlucky." Explain it once, then stop gating
+  // progress on it entirely after enough more attempts either way.
+  if (t.awaitingContact && !t.battingHintShown && t.battingMissCount >= 3) {
+    t.battingHintShown = true;
+    showTutorialDialog([
+      IS_MOBILE
+        ? "Hint: steer the joystick so your circle lines up with the ball, then hit SWING right as it's inside."
+        : "Hint: line your circle up with the ball as it comes in, then click right as it's inside.",
+    ], null);
+    return;
+  }
+  if (t.awaitingContact && t.battingMissCount >= 8) {
+    t.awaitingContact = false;
+    t.battingMissCount = 0;
+    t.battingHintShown = false;
+    showTutorialDialog(
+      ["No worries - let's keep moving. You'll get more chances in a real match!"],
+      t.practiceStep === 'bat_easy' ? beginBattingMedium : beginBattingFull
+    );
   }
 }
 
@@ -1954,46 +2045,45 @@ function wrapTutorialText(lines, x, y, size, weight, revealCount) {
   }
 }
 
-// A small, non-blocking Coach + caption in the one part of the gameplay
-// screen that's clear on both platforms: below the scoreboard (ends ~150px
-// down) and the power-up UI (ends ~230px down), well above the pitcher/
-// batter sprites (~440px+), the pitch-key menu (~560px+ desktop), and the
-// mobile joystick/swing/power-up buttons (~540px+) - real gameplay stays
-// fully visible and interactable everywhere else on screen. Much smaller
-// than the old blocking version (that one covered nothing else because it
-// covered everything).
-const TUTORIAL_COACH_H = 170;
-const TUTORIAL_COACH_X = 20;
-const TUTORIAL_COACH_Y = 245;
-function drawTutorialCaption() {
+function drawTutorialOverlay() {
   const t = app.tutorial;
-  if (!t.active) return;
-  const captionText = currentTutorialCaption();
-  if (!captionText) return;
+  if (!t.active || t.dialogLines.length === 0) return;
+
+  rect(0, 0, CANVAS_W, CANVAS_H, 'black', 0.55);
 
   const naturalW = COACH_IMG.naturalWidth || 832, naturalH = COACH_IMG.naturalHeight || 1280;
-  const coachW = TUTORIAL_COACH_H * (naturalW / naturalH);
+  const coachH = 420;
+  const coachW = coachH * (naturalW / naturalH);
+  const coachX = 10;
+  const coachY = CANVAS_H - coachH + 30; // feet crop slightly off the bottom edge - reads as "walked into frame"
   if (COACH_IMG.complete && COACH_IMG.naturalWidth) {
-    ctx.drawImage(COACH_IMG, TUTORIAL_COACH_X, TUTORIAL_COACH_Y, coachW, TUTORIAL_COACH_H);
+    ctx.drawImage(COACH_IMG, coachX, coachY, coachW, coachH);
   }
 
-  const textSize = 16, textWeight = 700;
-  const panelX = TUTORIAL_COACH_X + coachW - 10;
-  const panelW = Math.min(420, CANVAS_W - panelX - 20);
-  const textTopPad = 34, bottomPad = 16;
+  const textSize = 20, textWeight = 700;
+  const panelX = coachX + coachW - 15;
+  const panelW = CANVAS_W - panelX - 40;
+  const textTopPad = 68, bottomPad = 44;
   const lineHeight = toLen(textSize) * 1.35;
-  // Wrapped once against the FULL caption (not however much is revealed so
+  // Wrapped once against the FULL line (not however much is revealed so
   // far) so the panel height and each word's line placement stay fixed for
   // the whole reveal instead of resizing/reflowing as text types in.
-  const wrappedLines = computeWrappedLines(captionText, panelW - 32, textSize, textWeight);
-  const panelH = textTopPad + wrappedLines.length * lineHeight + bottomPad;
-  const panelY = TUTORIAL_COACH_Y + 10;
+  const wrappedLines = computeWrappedLines(t.dialogLines[0], panelW - 52, textSize, textWeight);
+  const panelH = Math.max(200, textTopPad + wrappedLines.length * lineHeight + bottomPad);
+  const panelY = CANVAS_H - panelH - 30;
 
-  rect(panelX, panelY, panelW, panelH, 'rgba(20,20,26,0.92)', 1, 'gold', 2);
-  text('COACH', panelX + 16, panelY + 18, 13, 'gold', 1, 'left', 900);
+  rect(panelX, panelY, panelW, panelH, 'rgba(20,20,26,0.95)', 1, 'gold', 3);
+  text('COACH', panelX + 26, panelY + 30, 16, 'gold', 1, 'left', 900);
 
   const revealCount = Math.floor(t.revealProgress);
-  wrapTutorialText(wrappedLines, panelX + 16, panelY + textTopPad, textSize, textWeight, revealCount);
+  wrapTutorialText(wrappedLines, panelX + 26, panelY + textTopPad, textSize, textWeight, revealCount);
+
+  const fullyRevealed = revealCount >= t.dialogLines[0].length;
+  text(
+    fullyRevealed
+      ? (IS_MOBILE ? 'Tap to continue ▶' : 'Click or press any key to continue ▶')
+      : (IS_MOBILE ? 'Tap to skip ▶' : 'Click or press any key to skip ▶'),
+    panelX + panelW - 24, panelY + panelH - 22, 13, '#cccccc', 0.9, 'right', 600);
 }
 
 /* ============================== INPUT: GAMEPLAY ============================== */
@@ -2005,7 +2095,7 @@ function canStartPitch() {
     && !app.isPitching && !app.powerUpActive;
 }
 
-function handleGameplayKey(key) {
+function handleGameplayKey(key, repeat) {
   // While the quit confirmation is up, it owns all keyboard input - nothing
   // else (swinging, pitching, fire tune mode, ...) should react to a
   // keypress meant to answer the dialog.
@@ -2019,9 +2109,16 @@ function handleGameplayKey(key) {
     else if (key === 'escape' || key === 'n') closeQuitConfirmAndResume();
     return;
   }
-  // Coach's caption (if any) never blocks input anymore - real keys reach
-  // real gameplay below even while it's showing (see the TUTORIAL section's
-  // own header comment).
+  // While Coach is talking, any key (other than Escape, which still opens
+  // the normal quit confirmation) advances to the next line instead of
+  // reaching pitching/swinging/fire-tune below. Only a genuine keypress
+  // advances it - the browser's own auto-repeat while a key is held would
+  // otherwise blow through several lines in one held press.
+  if (app.tutorial.active && app.tutorial.dialogLines.length > 0) {
+    if (key === 'escape') { openQuitConfirm(); return; }
+    if (!repeat) advanceTutorialDialog();
+    return;
+  }
   if (key === 'escape') { openQuitConfirm(); return; }
 
   // Fire Trail Tune Mode: a debug tool for dialing in the Fire power-up's
@@ -2100,7 +2197,6 @@ function handleGameplayKey(key) {
   if (key === 'm' && humanBatting && app.batPowerFull && !app.diceRolling) {
     const power = batterChar().bat.key;
     app.batPowerFull = false;
-    if (app.tutorial.active && app.tutorial.practiceStep === 'bat_powerup') beginBattingReal();
     // Only Gambler's Roll/Mirror Ball/Future Sight have power-up sounds among
     // the batting powers. Gambler's Roll and Mirror Ball don't play here -
     // their sound is tied to a later animation beat (see startDiceRoll() and
@@ -2197,15 +2293,6 @@ const SWING_CONTACT_WINDOW = 4;
 
 function attemptSwing() {
   if (app.isBatting) return;
-  // Frozen-ball demo: the swing itself (not waiting on confirmed contact a
-  // few ticks later via resolveHit()) is what "once they swing" means -
-  // the ball's stationary and the crosshair was just confirmed on it to
-  // even reach this step, so a genuine swing attempt here is effectively
-  // guaranteed to connect anyway.
-  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_frozen_swing') {
-    app.tutorial.practiceStep = 'bat_powerup';
-    app.tutorial.revealProgress = 0;
-  }
   app.isBatting = true;
   app.checkHit = true;
   app.swingContactTicksLeft = SWING_CONTACT_WINDOW;
@@ -2241,12 +2328,15 @@ function handlePointerDown(x, y) {
     return;
   }
   if (app.tutorial.active && pointInSkipTutorialButton(x, y)) { finishTutorial(); return; }
+  // Click anywhere to advance Coach's dialogue - matches the "any key"
+  // behavior in handleGameplayKey().
+  if (app.tutorial.active && app.tutorial.dialogLines.length > 0) { advanceTutorialDialog(); return; }
   if (IS_MOBILE) { handleMobilePlayTap(x, y); return; }
   if (app.activeBatterKey === 'cpu') return;
   if (x > toX(250)) attemptSwing();
 }
 
-canvas.addEventListener('mousedown', e => { ensureMusicStarted(); pokiGameplayStart(); handlePointerDown(mouseX, mouseY); });
+canvas.addEventListener('mousedown', e => { ensureMusicStarted(); handlePointerDown(mouseX, mouseY); });
 
 function touchToCanvasXY(touch) {
   const r = canvas.getBoundingClientRect();
@@ -2276,16 +2366,17 @@ function updateJoystickDeflection(x, y) {
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   ensureMusicStarted();
-  pokiGameplayStart();
   for (const touch of e.changedTouches) {
     const { x, y } = touchToCanvasXY(touch);
     // Only the batting layout has a joystick at all (drawMobileControls) -
     // a touch landing in that zone during any other screen/role just falls
-    // through to the normal tap dispatch below. Coach's caption never
-    // covers or blocks the joystick (see the TUTORIAL section) - it needs
-    // to keep working normally throughout, including during the batting
-    // frozen-ball demo, which is specifically teaching this control.
+    // through to the normal tap dispatch below. Also excluded while Coach's
+    // dialogue box is up: it dims/covers the joystick's usual spot (along
+    // with the rest of the screen) and freezes gameplay, so a tap there
+    // should dismiss the dialogue (via handlePointerDown()) instead of
+    // silently grabbing an invisible, inert joystick.
     if (app.screen === 'play' && !app.showQuitConfirm && app.activeBatterKey !== 'cpu'
+        && !(app.tutorial.active && app.tutorial.dialogLines.length > 0)
         && joystick.touchId === null && pointInJoystickZone(x, y)) {
       joystick.touchId = touch.identifier;
       updateJoystickDeflection(x, y);
@@ -3268,15 +3359,6 @@ function drawGameplay() {
   if (!IS_MOBILE) { drawPitchMenu(); drawPowerUpUi(); }
   drawSprites();
   drawPowerupEffects();
-  // Batting frozen-ball demo: dim everything drawn so far, then draw the
-  // ball/crosshair on TOP of that dim (not before it) so they're the one
-  // thing that stays fully lit and obviously the focal point - the same
-  // "spotlight" idea as the old full-screen dialogue dim, but only for this
-  // one teaching moment and without hiding the controls needed to act on it.
-  if (app.tutorial.active
-      && (app.tutorial.practiceStep === 'bat_frozen_move' || app.tutorial.practiceStep === 'bat_frozen_swing')) {
-    rect(0, 0, CANVAS_W, CANVAS_H, 'black', 0.5);
-  }
   drawBall();
   drawGhostBalls(); // ghosts render ON TOP of the real ball so they can disguise it
   drawDiceGame();
@@ -3286,9 +3368,10 @@ function drawGameplay() {
   drawFireTuneOverlay();
   drawPauseAnim();
   if (IS_MOBILE) drawMobileControls();
-  drawTutorialCaption(); // Coach + his current caption - non-blocking, see its own comment
-  // Stays up for the tutorial's entire duration - hidden under the
-  // quit-confirm modal (that one's already its own, more deliberate way out).
+  drawTutorialOverlay(); // Coach's dialogue box, dims the scene while a line is up
+  // Stays up for the tutorial's entire duration, not just while Coach is
+  // talking - hidden under the quit-confirm modal (that one's already its
+  // own, more deliberate way out).
   if (app.tutorial.active && !app.showQuitConfirm) drawSkipTutorialButton();
   drawQuitConfirm(); // on top of absolutely everything, including Pause's own freeze overlay and Coach
 }
@@ -3532,6 +3615,13 @@ function resolveHit() {
     // every swing, hit or miss - see attemptSwing()) - it erupts into an
     // actual cheer layered on top of the ambient loop.
     playSound(SOUNDS.crowdCheer);
+    // Tutorial batting drills (bat_easy/bat_medium) only care that contact
+    // happened at all, not what it turns into (single/double/ground out) -
+    // see stepTutorial().
+    if (app.tutorial.active && app.tutorial.awaitingContact) {
+      app.tutorial.awaitingContact = false;
+      app.tutorial.contactMade = true;
+    }
   }
   if (critHit || fireHit) {
     ball.accel = -toLen(0.2);
@@ -4006,10 +4096,12 @@ function update() {
   if (app.showQuitConfirm) return;
 
   // Checks flags set (on a previous tick) by the tutorial's forced-outcome
-  // hooks and, if a step's objective was just met, advances the script -
-  // see stepTutorial(). Unlike the quit-confirm check above, this never
-  // freezes the rest of update() - Coach's caption is non-blocking.
+  // hooks and, if a drill objective was just met, opens Coach's next line -
+  // see stepTutorial().
   stepTutorial();
+  // Coach's dialogue box freezes the whole scene while it's up, exactly like
+  // the quit-confirm modal above - see drawTutorialOverlay().
+  if (app.tutorial.active && app.tutorial.dialogLines.length > 0) return;
 
   // Pause's drag animation freezes everything else while it plays out -
   // only advance the animation itself and skip the rest of this tick.
@@ -4042,22 +4134,6 @@ function update() {
   app.prevBallX = ball.x;
   ball.y += ball.ySpeed;
   ball.x += ball.xSpeed;
-
-  // Tutorial's batting frozen-ball demo: once the pitch reaches FROZEN_BALL_X,
-  // clamp it there instead of letting it fly on through - gives the player
-  // an un-missable, stationary target to practice aiming the crosshair at
-  // before any real timing is asked of them. Only active for the two frozen
-  // sub-steps; once attemptSwing() advances practiceStep to 'bat_powerup',
-  // this stops matching and the ball's own post-swing velocity (set by
-  // resolveHit()) takes over normally.
-  if (app.tutorial.active
-      && (app.tutorial.practiceStep === 'bat_frozen_move' || app.tutorial.practiceStep === 'bat_frozen_swing')
-      && ball.x >= FROZEN_BALL_X) {
-    ball.x = FROZEN_BALL_X;
-    ball.y = FROZEN_BALL_Y;
-    ball.xSpeed = 0;
-    ball.ySpeed = 0;
-  }
 
   // Bug fix: stepIceShield() used to run at the very bottom of update(),
   // well after the generic plate-crossing check and Ghost Ball/Meteor's own
@@ -4224,14 +4300,7 @@ function update() {
   // guard would otherwise see "xSpeed 0, not pitching, no other power flag"
   // and immediately resetBall() the ball back to its resting spot before the
   // animation ever got a single frame to show the real contact point.
-  // Third bug fix: the tutorial's batting frozen-ball demo deliberately
-  // holds ball.xSpeed at 0 while it waits for the player to aim/swing (see
-  // FROZEN_BALL_X, above) - without this guard, this exact safety net saw
-  // that as a stuck ball and reset it back to the pitcher's mound the very
-  // next tick, before the player ever got a chance to do anything with it.
-  const tutorialFrozen = app.tutorial.active
-    && (app.tutorial.practiceStep === 'bat_frozen_move' || app.tutorial.practiceStep === 'bat_frozen_swing');
-  const genuinelyIdle = ball.xSpeed === 0 && !app.isPitching && !app.powerUpActive && !app.pauseAnimActive && !tutorialFrozen;
+  const genuinelyIdle = ball.xSpeed === 0 && !app.isPitching && !app.powerUpActive && !app.pauseAnimActive;
   // Second bug fix: once the ball is ALREADY sitting at rest, calling
   // resetBall() again every single idle tick was destructive - resetBall()
   // unconditionally zeroes ball.radius, app.batterFrozen and the swing/pitch
