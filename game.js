@@ -729,6 +729,14 @@ const app = {
     contactMade: false, // set by resolveHit() once contact happens during awaitingContact
     pitchingStrikeoutDone: false, // set once the scripted pitching drill's strikeout lands
     atBatResolved: false, // set once the closing full at-bat concludes (hit/walk/out)
+    // Stuck-player safety nets (see stepTutorial()) - batting timing is a
+    // real skill unlike pitching (any keypress is valid there), so without
+    // these a player who doesn't understand the crosshair can whiff the
+    // same forced pitch forever with zero feedback.
+    pitchIdleTicks: 0, // ticks since pitch practice began with no pitch thrown yet
+    pitchHintShown: false, // true once either the "press W" nudge has fired, or it's no longer needed
+    battingMissCount: 0, // consecutive whiffs in the current batting drill
+    battingHintShown: false, // true once this drill's crosshair-timing hint has fired
   },
 
   fireTuneActive: false, // debug: live fire-trail alignment tuning (press F)
@@ -842,7 +850,13 @@ function resetBall() {
   // pitch until the player makes contact - wiping the strike/ball dots every
   // time a pitch resolves without contact means a called strike/ball can
   // never accumulate into a real strikeout/walk and end the drill early.
-  if (app.tutorial.active && app.tutorial.awaitingContact) clearCounts(true);
+  // Reaching here with awaitingContact still true also means this pitch
+  // came and went with no contact - i.e. a whiff - see stepTutorial()'s
+  // hint/auto-pass safety net.
+  if (app.tutorial.active && app.tutorial.awaitingContact) {
+    clearCounts(true);
+    app.tutorial.battingMissCount++;
+  }
 }
 
 /* ============================== DRAW HELPERS ============================== */
@@ -1808,6 +1822,8 @@ function beginPitchPractice() {
   app.tutorial.practiceStep = 'pitch';
   app.tutorial.forceWhiffCpuBatter = true;
   app.tutorial.forceStrikeOnBall = true;
+  app.tutorial.pitchIdleTicks = 0;
+  app.tutorial.pitchHintShown = false;
 }
 
 function beginBattingEasy() {
@@ -1831,6 +1847,8 @@ function beginBattingEasy() {
   // pitch - the "really easy, straight line" starter this drill promises.
   app.tutorial.forcedPitch = 'EFastball';
   app.tutorial.awaitingContact = true;
+  app.tutorial.battingMissCount = 0;
+  app.tutorial.battingHintShown = false;
 }
 
 function beginBattingMedium() {
@@ -1839,6 +1857,8 @@ function beginBattingMedium() {
   app.tutorial.practiceStep = 'bat_medium';
   app.tutorial.forcedPitch = 'Fastball'; // faster, with a touch of rise - one notch harder than dead-straight
   app.tutorial.awaitingContact = true;
+  app.tutorial.battingMissCount = 0;
+  app.tutorial.battingHintShown = false;
 }
 
 function beginBattingFull() {
@@ -1905,6 +1925,53 @@ function stepTutorial() {
       "That's the at-bat! You've got the fundamentals down.",
       "Now get out there and be a Hero!",
     ], finishTutorial);
+    return;
+  }
+
+  // Everything below is a stuck-player nudge, not a real drill-progress
+  // check - never open one on top of a dialogue that's already up (either
+  // one just opened above, or one still being read from an earlier tick).
+  if (t.dialogLines.length > 0) return;
+
+  // Pitching practice: any keypress is a valid pitch here (forceStrikeOnBall
+  // makes every one a Strike), so a player who's thrown nothing in a while
+  // almost certainly doesn't know which key does that, not that they're
+  // thinking it over - nudge them once, after a real pause.
+  if (t.practiceStep === 'pitch' && !t.pitchHintShown) {
+    if (app.isPitching || ball.visible || app.pitch) {
+      t.pitchHintShown = true; // they've thrown one - this nudge is no longer relevant
+    } else if (++t.pitchIdleTicks >= 400) { // ~10s at 40 ticks/sec
+      t.pitchHintShown = true;
+      showTutorialDialog([
+        IS_MOBILE
+          ? "Whenever you're ready - tap the Fastball button below to throw your first pitch!"
+          : "Whenever you're ready - press W to throw your first pitch!",
+      ], null); // no onDialogDone - just a nudge, dismissing it resumes the drill right where it was
+    }
+    return;
+  }
+
+  // Batting practice: unlike pitching, this genuinely takes some timing/
+  // aim to pull off - a few misses in a row means "doesn't understand the
+  // mechanic yet," not "unlucky." Explain it once, then stop gating
+  // progress on it entirely after enough more attempts either way.
+  if (t.awaitingContact && !t.battingHintShown && t.battingMissCount >= 3) {
+    t.battingHintShown = true;
+    showTutorialDialog([
+      IS_MOBILE
+        ? "Hint: steer the joystick so your circle lines up with the ball, then hit SWING right as it's inside."
+        : "Hint: line your circle up with the ball as it comes in, then click right as it's inside.",
+    ], null);
+    return;
+  }
+  if (t.awaitingContact && t.battingMissCount >= 8) {
+    t.awaitingContact = false;
+    t.battingMissCount = 0;
+    t.battingHintShown = false;
+    showTutorialDialog(
+      ["No worries - let's keep moving. You'll get more chances in a real match!"],
+      t.practiceStep === 'bat_easy' ? beginBattingMedium : beginBattingFull
+    );
   }
 }
 
