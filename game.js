@@ -47,42 +47,163 @@ const IS_MOBILE = MOBILE_OVERRIDE !== null
 const ICONS = 'assets/icons/';
 const PORTRAITS = 'assets/portraits/';
 
-/* ============================== CHARACTER ROSTER ============================== */
+/* ============================== CHARACTER ROSTER ==============================
+   Order matches the Solo-mode unlock progression (see PROGRESSION_ORDER,
+   derived directly from this array's order below) - Antman first (unlocked
+   by default), Scientist last, everything else in between exactly as
+   specified for the progression system. Browsing (A/D, arrow keys) on every
+   select screen, and the CPU roster's beat-the-previous-one order, all just
+   fall out of this array order for free. */
 const CHARACTERS = [
-  { key: 'pyro', name: 'The Pyro', color: '#ff7a1a', portrait: PORTRAITS + 'pyro.png',
-    bat: { key: 'fire', label: 'Fire', icon: ICONS + 'fire.png' },
-    pitch: { key: 'meteor', label: 'Meteor', icon: ICONS + 'meteor.png' } },
+  { key: 'antman', name: 'Antman', color: '#4caf50', portrait: PORTRAITS + 'antman.png',
+    bat: { key: 'expandShot', label: 'Ball Expand', icon: ICONS + 'ball_expand.png' },
+    pitch: { key: 'ballShrink', label: 'Ball Shrink', icon: ICONS + 'ball_shrink.png' } },
+  { key: 'bruiser', name: 'The Bruiser', color: '#d1263f', portrait: PORTRAITS + 'bruiser.png',
+    bat: { key: 'guaranteedContact', label: 'Guaranteed Contact', icon: ICONS + 'guaranteed_contact.png' },
+    pitch: { key: 'fastballPlus', label: 'Fastball Plus', icon: ICONS + 'fastball_plus.png' } },
+  { key: 'iceman', name: 'Iceman', color: '#8fe0ff', portrait: PORTRAITS + 'iceman.png',
+    bat: { key: 'iceShield', label: 'Ice Shield', icon: ICONS + 'ice_shield.png' },
+    pitch: { key: 'iceBall', label: 'Ice Ball', icon: ICONS + 'ice_ball.png' } },
+  { key: 'gambler', name: 'The Gambler', color: '#f0c020', portrait: PORTRAITS + 'gambler.png',
+    bat: { key: 'gamblerBatting', label: "Gambler's Roll", icon: ICONS + 'dice_batting.png' },
+    pitch: { key: 'gamblerPitching', label: "Gambler's Roll", icon: ICONS + 'dice_pitching.png' } },
   { key: 'trickster', name: 'The Trickster', color: '#9b59d0', portrait: PORTRAITS + 'trickster.png',
     bat: { key: 'mirrorBall', label: 'Mirror Ball', icon: ICONS + 'mirror_ball.png' },
     pitch: { key: 'ghost', label: 'Ghost Ball', icon: ICONS + 'ghost.png' } },
-  { key: 'scientist', name: 'The Scientist', color: '#2b6fe0', portrait: PORTRAITS + 'scientist.png',
-    bat: { key: 'timeStop', label: 'Time Stop', icon: ICONS + 'time_stop.png' },
-    pitch: { key: 'droneBall', label: 'Drone Ball', icon: ICONS + 'drone_ball.png' } },
   // color is the lighter UI/name-text shade (kept legible on the select
   // screen); the uniform sprite itself is recolored much darker - see
   // recolor.py.
   { key: 'shadow', name: 'The Shadow', color: '#5a5a63', portrait: PORTRAITS + 'shadow.png',
     bat: { key: 'blackoutSwing', label: 'Blackout Swing', icon: ICONS + 'blackout_swing.png' },
     pitch: { key: 'void', label: 'The Void', icon: ICONS + 'void.png' } },
-  { key: 'gambler', name: 'The Gambler', color: '#f0c020', portrait: PORTRAITS + 'gambler.png',
-    bat: { key: 'gamblerBatting', label: "Gambler's Roll", icon: ICONS + 'dice_batting.png' },
-    pitch: { key: 'gamblerPitching', label: "Gambler's Roll", icon: ICONS + 'dice_pitching.png' } },
-  { key: 'strategist', name: 'The Strategist', color: '#d626b0', portrait: PORTRAITS + 'strategist.png',
-    bat: { key: 'pause', label: 'Pause', icon: ICONS + 'pause.png' },
-    pitch: { key: 'spinCycle', label: 'Spin Cycle', icon: ICONS + 'spin_cycle.png' } },
-  { key: 'antman', name: 'Antman', color: '#4caf50', portrait: PORTRAITS + 'antman.png',
-    bat: { key: 'expandShot', label: 'Ball Expand', icon: ICONS + 'ball_expand.png' },
-    pitch: { key: 'ballShrink', label: 'Ball Shrink', icon: ICONS + 'ball_shrink.png' } },
-  { key: 'iceman', name: 'Iceman', color: '#8fe0ff', portrait: PORTRAITS + 'iceman.png',
-    bat: { key: 'iceShield', label: 'Ice Shield', icon: ICONS + 'ice_shield.png' },
-    pitch: { key: 'iceBall', label: 'Ice Ball', icon: ICONS + 'ice_ball.png' } },
   { key: 'oracle', name: 'The Oracle', color: '#2e8b74', portrait: PORTRAITS + 'oracle.png',
     bat: { key: 'futureSight', label: 'Future Sight', icon: ICONS + 'future_sight.png' },
     pitch: { key: 'mirage', label: 'Mirage', icon: ICONS + 'mirage.png' } },
-  { key: 'bruiser', name: 'The Bruiser', color: '#d1263f', portrait: PORTRAITS + 'bruiser.png',
-    bat: { key: 'guaranteedContact', label: 'Guaranteed Contact', icon: ICONS + 'guaranteed_contact.png' },
-    pitch: { key: 'fastballPlus', label: 'Fastball Plus', icon: ICONS + 'fastball_plus.png' } },
+  { key: 'pyro', name: 'The Pyro', color: '#ff7a1a', portrait: PORTRAITS + 'pyro.png',
+    bat: { key: 'fire', label: 'Fire', icon: ICONS + 'fire.png' },
+    pitch: { key: 'meteor', label: 'Meteor', icon: ICONS + 'meteor.png' } },
+  { key: 'strategist', name: 'The Strategist', color: '#d626b0', portrait: PORTRAITS + 'strategist.png',
+    bat: { key: 'pause', label: 'Pause', icon: ICONS + 'pause.png' },
+    pitch: { key: 'spinCycle', label: 'Spin Cycle', icon: ICONS + 'spin_cycle.png' } },
+  { key: 'scientist', name: 'The Scientist', color: '#2b6fe0', portrait: PORTRAITS + 'scientist.png',
+    bat: { key: 'timeStop', label: 'Time Stop', icon: ICONS + 'time_stop.png' },
+    pitch: { key: 'droneBall', label: 'Drone Ball', icon: ICONS + 'drone_ball.png' } },
 ];
+
+/* ============================== PROGRESSION / UNLOCKS (Solo mode only) ==============================
+   Solo mode gates both rosters behind progress instead of leaving every
+   character freely selectable: the player unlocks characters by completing
+   specific in-game feats (see PLAYER_UNLOCK_CONDITIONS), while the CPU
+   roster unlocks strictly in order, one slot at a time, by beating whichever
+   CPU character is currently faced (see PROGRESSION_ORDER). CPU difficulty
+   is no longer a manual picker - it's derived from the chosen CPU
+   character's rank in that same order (characterDifficultyIndex()).
+   Versus mode is untouched by any of this - every character stays freely
+   selectable there, as today. */
+// Derived straight from CHARACTERS' own order (see that array's own comment)
+// rather than a second hardcoded list, so the two can never drift apart.
+const PROGRESSION_ORDER = CHARACTERS.map(c => c.key);
+// 3 easy, 4 medium, 3 hard, indexed by a character's position in PROGRESSION_ORDER.
+const CPU_DIFFICULTY_BY_RANK = [0, 0, 0, 1, 1, 1, 1, 2, 2, 2];
+// Shown under a locked player character card - see drawPortraitCard()'s
+// contentLocked branch. null means "unlocked by default" (never shown locked).
+const PLAYER_UNLOCK_CONDITIONS = {
+  antman: null,
+  bruiser: 'Hit your first home run',
+  iceman: 'Strike out 25 batters total',
+  gambler: 'Win a game after trailing by 3+ runs',
+  trickster: 'Hit a grand slam',
+  shadow: 'Win a game without using a single power-up',
+  oracle: 'Get a hit off every pitch type in one inning',
+  pyro: 'Score 10 runs in a single game',
+  strategist: 'Win a game allowing zero hits while pitching',
+  scientist: 'Win a game with each of the other 9 characters',
+};
+
+function characterName(key) {
+  const c = CHARACTERS.find(ch => ch.key === key);
+  return c ? c.name : key;
+}
+// Most locked-card condition text is the static string above, but Iceman's
+// is cumulative and worth showing live progress on (e.g. "(9/25)") so the
+// player can see how close they are - everything else is either a one-shot
+// event or scoped to a single game/inning, where a running counter wouldn't
+// mean much.
+function playerUnlockConditionText(key) {
+  if (key === 'iceman') {
+    return 'Strike out 25 batters total (' + Math.min(saveData.stats.totalStrikeouts, 25) + '/25)';
+  }
+  return PLAYER_UNLOCK_CONDITIONS[key];
+}
+// A locked CPU card's condition text is dynamic (depends on whichever CPU
+// character sits one rank below it), unlike the player's static conditions
+// above.
+function cpuUnlockConditionText(key) {
+  const rank = PROGRESSION_ORDER.indexOf(key);
+  if (rank <= 0) return null; // rank 0 (antman) is unlocked by default
+  return 'Beat ' + characterName(PROGRESSION_ORDER[rank - 1]) + ' to unlock';
+}
+function characterDifficultyIndex(key) {
+  const rank = PROGRESSION_ORDER.indexOf(key);
+  return CPU_DIFFICULTY_BY_RANK[rank] ?? 1;
+}
+
+const SAVE_KEY = 'heroBallSave';
+function defaultSaveData() {
+  return {
+    version: 1,
+    playerUnlocked: { antman: true },
+    cpuUnlocked: { antman: true },
+    stats: {
+      everHitHomeRun: false,
+      totalStrikeouts: 0,
+      winsWithCharacter: {}, // character key -> true, tracked for the 9 non-Scientist characters
+    },
+  };
+}
+// Merges saved data over a fresh set of defaults (rather than trusting the
+// saved object's shape completely) so a save from before a future stat gets
+// added doesn't come back missing that field and crash the first time it's
+// read - and falls back to defaults entirely if the stored value isn't even
+// valid JSON.
+function loadSaveData() {
+  const fresh = defaultSaveData();
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return fresh;
+    const saved = JSON.parse(raw);
+    return {
+      version: fresh.version,
+      playerUnlocked: Object.assign({}, fresh.playerUnlocked, saved.playerUnlocked),
+      cpuUnlocked: Object.assign({}, fresh.cpuUnlocked, saved.cpuUnlocked),
+      stats: {
+        everHitHomeRun: !!(saved.stats && saved.stats.everHitHomeRun),
+        totalStrikeouts: (saved.stats && saved.stats.totalStrikeouts) || 0,
+        winsWithCharacter: Object.assign({}, saved.stats && saved.stats.winsWithCharacter),
+      },
+    };
+  } catch (e) {
+    return fresh;
+  }
+}
+function persistSaveData() {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(saveData)); } catch (e) { /* storage unavailable/full - progress just won't persist this session */ }
+}
+let saveData = loadSaveData();
+function isPlayerUnlocked(key) { return !!saveData.playerUnlocked[key]; }
+function isCpuUnlocked(key) { return !!saveData.cpuUnlocked[key]; }
+// Flips a character to unlocked (if it wasn't already) and queues it for the
+// post-game unlockReveal screen (see app.newlyUnlocked). Callers are
+// responsible for calling persistSaveData() afterward - left out here so a
+// caller flipping several unlocks in a row (evaluateGameEndUnlocks()) only
+// writes to localStorage once.
+function unlockCharacter(type, key) {
+  const store = type === 'player' ? saveData.playerUnlocked : saveData.cpuUnlocked;
+  if (store[key]) return false;
+  store[key] = true;
+  app.newlyUnlocked.push({ type, key, name: characterName(key) });
+  return true;
+}
 
 const KNUCKLE_CHAOS_END_X = 280; // knuckleball bounces chaotically before this x, then corrects into the zone (0-400 units)
 const KNUCKLE_ZONE_TARGET_Y = 277; // corrective phase steers toward dead-center of the strike zone (265-290)
@@ -588,7 +709,7 @@ const app = {
   // hurting early retention. 'mode' is still very much a real screen, just
   // never the FIRST one - reached normally once the tutorial finishes, gets
   // skipped, or a real match ends/gets quit.
-  screen: 'mode', // mode | characterSolo | characterVersus | mobileCharacterSelect | mobileDifficultySelect | play
+  screen: 'mode', // mode | characterSolo | characterVersus | mobileCharacterSelect | mobileCpuSelect | play | gameOver | unlockReveal
   mode: null, // 'solo' | 'versus'
   modeSelectIndex: 0, // 0 = Solo, 1 = 2 Player
   difficultyIndex: 0, // default Easy - Normal was too punishing for a brand-new player's very first match
@@ -597,11 +718,6 @@ const app = {
   cpuBatterIndex: 0,
   player1Locked: false,
   player2Locked: false,
-  // Mobile-only: the character/difficulty select steps are two separate
-  // screens with their own confirm button (see mobileCharacterSelect /
-  // mobileDifficultySelect) instead of desktop's single combined screen, so
-  // difficulty needs its own lock flag alongside player1Locked.
-  difficultyLocked: false,
   readyOpacity: 0,
 
   // Escape-to-quit confirmation, shown over the 'play' screen. update()
@@ -710,6 +826,21 @@ const app = {
   pitchPowerFull: true,
 
   batFireVisible: false,
+
+  // Solo-mode progression tracking for the current match only - see
+  // evaluateGameEndUnlocks() (checked once the match ends) and the
+  // cumulative counters in saveData.stats (persisted across matches).
+  // Reset every new match in resetMatchState().
+  maxDeficitThisGame: 0, // largest (awayScore - homeScore) seen this game - for "won after trailing by 3+"
+  humanUsedPowerThisGame: false, // for "won without using a power-up"
+  hitsAllowedByHumanThisGame: 0, // hits the CPU got while the human was pitching - for the no-hitter condition
+  lastPitchThrown: '', // stashed by resolveHit() before app.pitch gets cleared - see recordBaseHit()'s pitch-type tracking
+  // Oracle's condition is per-inning, not cumulative - reset every time the
+  // human's own batting half-inning starts (see assignActiveRoles()), not
+  // just once per match.
+  pitchTypesHitThisInning: { fastball: false, curveball: false, riser: false, knuckleball: false },
+  newlyUnlocked: [], // [{type:'player'|'cpu', key, name}] populated by evaluateGameEndUnlocks(), shown by the unlockReveal screen
+  cpuLocked: false, // mirrors player1Locked, but for the CPU character card on the solo/mobileCpuSelect screens
 
   // Interactive tutorial (see startTutorial()/stepTutorial()/
   // drawTutorialOverlay()). Reuses the real 'play' screen and gameplay code
@@ -1150,6 +1281,10 @@ function battingTeamIsHome() { return !app.homePitching; }
 
 function scoreRun() {
   if (battingTeamIsHome()) homeScore++; else awayScore++;
+  // Solo mode: p1 is always homeScore for the whole match (see startMatch()'s
+  // comment) - track the largest deficit the human has faced, for the
+  // "won after trailing by 3+" unlock condition (evaluateGameEndUnlocks()).
+  if (app.mode === 'solo') app.maxDeficitThisGame = Math.max(app.maxDeficitThisGame, awayScore - homeScore);
 }
 
 function clearCounts(clearOuts) {
@@ -1177,11 +1312,56 @@ function clearPowerupVisuals() {
   app.batterBig = false;
 }
 
+// Maps a live pitch name (Fastball/EFastball/HFastball/FastballPlus, etc.)
+// down to one of the 4 base pitch types for the "hit off every pitch type"
+// unlock condition - substring checks absorb every E-/H- difficulty prefix
+// and the Plus suffix uniformly. Power pitches with their own custom
+// trajectory (Ghost/Meteor/SpinCycle/DroneBall) don't match any of the 4 and
+// return null - they aren't one of "fastball/curveball/riser/knuckleball".
+function basePitchType(pitchName) {
+  if (!pitchName) return null;
+  if (pitchName.includes('Fastball')) return 'fastball';
+  if (pitchName.includes('Curveball')) return 'curveball';
+  if (pitchName.includes('Riser')) return 'riser';
+  if (pitchName.includes('Knuckleball')) return 'knuckleball';
+  return null;
+}
+
 function recordBaseHit() {
   // Tutorial's closing full at-bat (bat_full) ends on whatever the at-bat's
   // outcome turns out to be - a hit is one of the three ways it can conclude
   // (alongside a walk in forceWalk() and an out in recordOut()).
   if (app.tutorial.active && app.tutorial.practiceStep === 'bat_full') app.tutorial.atBatResolved = true;
+
+  // Solo-mode progression: a "hit" here always means a real Single/Double/
+  // Home Run (a Ground Out routes through recordOut() instead, never here).
+  if (app.mode === 'solo') {
+    if (app.activeBatterKey === 'cpu') {
+      // Human is pitching and just allowed a hit - for the no-hitter condition.
+      app.hitsAllowedByHumanThisGame++;
+    } else {
+      // Human is batting. Oracle's condition is scoped to a single inning
+      // (see app.pitchTypesHitThisInning's own comment) rather than
+      // cumulative across the whole save file.
+      const type = basePitchType(app.lastPitchThrown);
+      if (type) {
+        app.pitchTypesHitThisInning[type] = true;
+        const pts = app.pitchTypesHitThisInning;
+        if (pts.fastball && pts.curveball && pts.riser && pts.knuckleball) unlockCharacter('player', 'oracle');
+      }
+      if (app.homeRun) {
+        if (!saveData.stats.everHitHomeRun) {
+          saveData.stats.everHitHomeRun = true;
+          unlockCharacter('player', 'bruiser');
+        }
+        // Snapshot before the bases-clearing loop below empties them - a
+        // grand slam is a Home Run with all 3 bases occupied at contact.
+        if (bases.every(b => b === 'gold')) unlockCharacter('player', 'trickster');
+      }
+      persistSaveData();
+    }
+  }
+
   if (app.voidActive) { ball.visible = true; app.voidActive = false; }
   clearPowerupVisuals();
 
@@ -1276,6 +1456,7 @@ function switchSides() {
         // triggers goToCharacterSelectAfterGameOver(), which resets
         // homeScore/awayScore back to 0.
         app.gameOverP1Wins = homeScore > awayScore;
+        if (app.mode === 'solo') evaluateGameEndUnlocks();
         app.screen = 'gameOver';
         pokiGameplayStop();
       }
@@ -1283,10 +1464,43 @@ function switchSides() {
   }
 }
 
+// Checked once, right as a solo match ends - covers every unlock condition
+// that depends on the game's final win/loss (the ones that can be detected
+// mid-game instead - first home run, grand slam, 25th cumulative strikeout,
+// all 4 pitch types hit - are already handled where they happen, in
+// recordBaseHit()/recordStrike()). Populates app.newlyUnlocked for the
+// post-game unlockReveal screen (see goToCharacterSelectAfterGameOver()).
+function evaluateGameEndUnlocks() {
+  if (app.gameOverP1Wins) {
+    if (homeScore >= 10) unlockCharacter('player', 'pyro');
+    if (app.maxDeficitThisGame >= 3) unlockCharacter('player', 'gambler');
+    if (!app.humanUsedPowerThisGame) unlockCharacter('player', 'shadow');
+    if (app.hitsAllowedByHumanThisGame === 0) unlockCharacter('player', 'strategist');
+
+    const myKey = CHARACTERS[app.player1Index].key;
+    if (myKey !== 'scientist') saveData.stats.winsWithCharacter[myKey] = true;
+    if (CHARACTERS.filter(c => c.key !== 'scientist').every(c => saveData.stats.winsWithCharacter[c.key])) {
+      unlockCharacter('player', 'scientist');
+    }
+
+    // CPU roster advances one slot past whichever CPU character was just beaten.
+    const cpuKey = CHARACTERS[app.cpuBatterIndex].key;
+    const rank = PROGRESSION_ORDER.indexOf(cpuKey);
+    if (rank >= 0 && rank + 1 < PROGRESSION_ORDER.length) unlockCharacter('cpu', PROGRESSION_ORDER[rank + 1]);
+  }
+  persistSaveData();
+}
+
 function assignActiveRoles() {
   if (app.mode === 'solo') {
     if (app.homePitching) { app.activePitcherKey = 'p1'; app.activeBatterKey = 'cpu'; }
-    else { app.activePitcherKey = 'cpu'; app.activeBatterKey = 'p1'; }
+    else {
+      app.activePitcherKey = 'cpu'; app.activeBatterKey = 'p1';
+      // A fresh half-inning of human batting is starting (called from
+      // startMatch() or switchSides(), never mid-turn) - Oracle's "every
+      // pitch type in one inning" condition gets a clean slate each time.
+      app.pitchTypesHitThisInning = { fastball: false, curveball: false, riser: false, knuckleball: false };
+    }
   } else {
     if (app.homePitching) { app.activePitcherKey = 'p1'; app.activeBatterKey = 'p2'; }
     else { app.activePitcherKey = 'p2'; app.activeBatterKey = 'p1'; }
@@ -1310,14 +1524,28 @@ function recordStrike() {
   app.showFutureSight = false;
   for (let i = 0; i < 3; i++) {
     if (strikeFills[i] === 'dimgray') { strikeFills[i] = 'gold'; return; }
-    if (i === 1) { clearCounts(false); recordOut(); return; }
+    if (i === 1) {
+      // 3rd strike - a genuine strikeout, distinct from a fielded/ground out
+      // (which never calls recordStrike() at all) - the only place this
+      // distinction can be made, since recordOut() itself has no idea why
+      // it was called. Only counts when the human is the one pitching.
+      if (app.mode === 'solo' && app.activePitcherKey !== 'cpu') {
+        saveData.stats.totalStrikeouts++;
+        if (saveData.stats.totalStrikeouts >= 25) unlockCharacter('player', 'iceman');
+        persistSaveData();
+      }
+      clearCounts(false); recordOut(); return;
+    }
   }
 }
 
 function forceWalk() {
   if (app.tutorial.active && app.tutorial.practiceStep === 'bat_full') app.tutorial.atBatResolved = true;
   showCallBanner('Walk');
-  ballFills[0] = ballFills[1] = ballFills[2] = ballFills[3] = 'dimgray';
+  // Bug fix: a walk starts a fresh plate appearance, same as any other
+  // concluded at-bat - the strike count needs to reset right along with the
+  // ball count instead of carrying over into the next batter's count.
+  clearCounts(false);
   for (let j = 0; j < 3; j++) {
     if (bases[j] === 'grey') { bases[j] = 'gold'; return; }
     if (j === 2) { scoreRun(); return; }
@@ -1448,12 +1676,103 @@ function finishDiceCardScroll() {
 }
 
 /* ============================== CPU AI ============================== */
+// Chance (out of 100) the CPU activates its power-up on any single pitch/
+// swing attempt while its meter is full - see activatePitchPower()'s call
+// in cpuPitch() and activateCpuBatPower()'s call in cpuSwing(). Rolled once
+// per attempt rather than once per half-inning, so across the handful of
+// pitches/swings in a half-inning it fires "randomly" without being
+// deterministic - pitchPowerFull/batPowerFull's existing once-per-half-
+// inning refill already caps it at one use.
+const CPU_POWER_CHANCE = 30;
+
+// Rolls a 0-1000 contact roll against explicit whiff/single/double slot
+// sizes (whatever's left over after whiff+single+double goes to home run) -
+// shared by the base CPU swing odds and every activateCpuBatPower() table
+// below, so every tier boundary is computed the same way in one place.
+function rollContactTier(whiff, single, double) {
+  const roll = randRange(0, 1000);
+  if (roll < whiff) return 'whiff';
+  if (roll < whiff + single) return 'single';
+  if (roll < whiff + single + double) return 'double';
+  return 'homerun';
+}
+function applyContactTier(tier) {
+  if (tier === 'single') { ball.xSpeed = -lenX(randRange(10, 20)); ball.ySpeed = -toLen(randRange(7, 12)); }
+  else if (tier === 'double') { ball.xSpeed = -lenX(randRange(24, 28)); ball.ySpeed = -toLen(randRange(18, 22)); }
+  else if (tier === 'homerun') { ball.xSpeed = -lenX(40); ball.ySpeed = -toLen(20); app.homeRun = true; }
+}
+
+// CPU batting power-ups: unlike the human M-key powers (which mostly change
+// crosshair size/visibility for a real human to aim with), a CPU doesn't
+// aim at all - cpuSwing() is a pure dice roll. So instead of reusing the
+// M-key handler, each bat power gets its own contact-tier table here. Fire
+// and Guaranteed Contact/Expand Shot follow exact behavior specified for
+// this feature (see PLAYER_UNLOCK_CONDITIONS' neighboring comment block);
+// the remaining power-ups (whose real effect is an aim/timing aid with no
+// clean autonomous-roll analog) get a flat, clearly-labeled moderate boost.
+function activateCpuBatPower() {
+  app.batPowerFull = false;
+  const power = batterChar().bat.key;
+
+  if (power === 'gamblerBatting') {
+    // Already outcome-random rather than aim-based - reuse the real dice
+    // minigame exactly as the human M-key does.
+    startDiceRoll(true);
+    return;
+  }
+
+  playAnimation('batter');
+  app.isBatting = true;
+  app.swung = true;
+  ball.accel = -toLen(0.2);
+
+  let tier;
+  if (power === 'guaranteedContact') {
+    // "Guaranteed hit... a homerun isn't possible" - no whiff, no HR slot.
+    tier = rollContactTier(0, 650, 350);
+  } else if (power === 'fire') {
+    // "Odds of a hit don't go up... if they do hit it, it'll be a homerun" -
+    // same whiff rate as the unmodified base table, all the rest is HR.
+    tier = rollContactTier(755, 0, 0);
+  } else if (power === 'expandShot') {
+    // "Expands the crosshair, likelihood of a hit goes up" - hit rate ~55%
+    // vs. the base table's 24.5%.
+    tier = rollContactTier(450, 350, 130);
+  } else if (power === 'pause') {
+    // Real Pause upgrades the outcome by one tier - mirrored directly:
+    // whiff becomes a Single, anything that already made contact becomes a
+    // Home Run (the further "would-be HR becomes golden" upgrade doesn't
+    // apply here - that's an exceedingly rare tier to land on already).
+    tier = rollContactTier(755, 172, 49) === 'whiff' ? 'single' : 'homerun';
+  } else if (power === 'mirrorBall') {
+    // Real Mirror Ball gives an unswung strike a second identical pitch
+    // instead of calling it - translated as one extra roll on a whiff.
+    tier = rollContactTier(755, 172, 49);
+    if (tier === 'whiff') tier = rollContactTier(755, 172, 49);
+  } else {
+    // timeStop/blackoutSwing/iceShield/futureSight - all 4 are inherently
+    // human-aim aids (slow the ball down, enlarge the hitbox, a defensive
+    // shield, a pitch preview) with no clean 1:1 autonomous-roll analog -
+    // a flat, modest boost stands in for all four.
+    tier = rollContactTier(600, 280, 90);
+  }
+  applyContactTier(tier);
+}
+
 function cpuSwing() {
   app.cpuSwung = true;
   // Tutorial pitching drill: guarantee the strikeout instead of leaving it to
   // the CPU's normal ~24.5% contact odds, which could stall the drill for a
   // long, un-fun stretch of at-bats.
   if (app.tutorial.active && app.tutorial.forceWhiffCpuBatter) return;
+  // CPU power-up usage: rolled once per swing attempt while the meter is
+  // full (see CPU_POWER_CHANCE) - takes priority over the opposing pitch-
+  // power odds-reduction below, same as a human M-key press isn't blocked
+  // by an in-flight pitch power either.
+  if (app.batPowerFull && randRange(0, 100) < CPU_POWER_CHANCE) {
+    activateCpuBatPower();
+    return;
+  }
   if (app.powerUpActive) {
     // A special pitch effect is in play (disguised/tricky ball), so contact
     // odds drop from 24.5% to exactly 10% - same 70/20/10 Single/Double/Home
@@ -1491,6 +1810,14 @@ function cpuPitch() {
   if (app.tutorial.active && app.tutorial.forcedPitch) {
     app.pitch = app.tutorial.forcedPitch;
     app.isPitching = true;
+    return;
+  }
+  // CPU power-up usage: functions identically to the human Z key (see
+  // activatePitchPower()) - just rolled randomly instead of key-pressed.
+  // Same !ghostBalls[0].visible guard the Z-key handler uses (a narrow race
+  // window where a decoy is about to appear but hasn't started tracking yet).
+  if (app.pitchPowerFull && !ghostBalls[0].visible && randRange(0, 100) < CPU_POWER_CHANCE) {
+    activatePitchPower();
     return;
   }
   const sets = [
@@ -1537,6 +1864,10 @@ window.addEventListener('keydown', e => {
     if (key === 'enter') goToCharacterSelectAfterGameOver();
     return;
   }
+  if (app.screen === 'unlockReveal') {
+    if (key === 'enter') dismissUnlockReveal();
+    return;
+  }
   if (app.screen === 'play') {
     handleGameplayKey(key, e.repeat);
   }
@@ -1544,11 +1875,12 @@ window.addEventListener('keydown', e => {
 
 window.addEventListener('keyup', () => {});
 
-// Randomizes which character the select cursor starts on each time the
-// character select screen is entered, instead of always landing on
-// CHARACTERS[0] (Pyro).
+// Versus mode randomizes which character each cursor starts on, for
+// variety. Solo mode always starts the player cursor on Antman instead -
+// he's the one character guaranteed unlocked from the start, so a
+// brand-new player never lands on a locked (silhouetted) card by default.
 function randomizeCharacterCursor(mode) {
-  app.player1Index = randRange(0, CHARACTERS.length);
+  app.player1Index = mode === 'solo' ? CHARACTERS.findIndex(c => c.key === 'antman') : randRange(0, CHARACTERS.length);
   if (mode === 'versus') app.player2Index = randRange(0, CHARACTERS.length);
 }
 
@@ -1569,6 +1901,7 @@ function goBackToModeSelect() {
   app.screen = 'mode';
   app.player1Locked = false;
   app.player2Locked = false;
+  app.cpuLocked = false;
   app.readyOpacity = 0;
 }
 
@@ -1614,6 +1947,14 @@ function resetMatchState() {
   app.tutorial.contactMade = false;
   app.tutorial.pitchingStrikeoutDone = false;
   app.tutorial.atBatResolved = false;
+
+  // Solo-mode progression counters - see their declarations on `app` above.
+  app.maxDeficitThisGame = 0;
+  app.humanUsedPowerThisGame = false;
+  app.hitsAllowedByHumanThisGame = 0;
+  app.lastPitchThrown = '';
+  app.pitchTypesHitThisInning = { fastball: false, curveball: false, riser: false, knuckleball: false };
+  app.newlyUnlocked = [];
 }
 
 function quitToModeSelect() {
@@ -1648,13 +1989,29 @@ function closeQuitConfirmAndResume() {
 // player leaves a completed game, never before they've played one.
 // pokiBreakPending guards against mashing the game-over button firing a
 // second overlapping break.
+// Both "Back To Menu" entry points (Enter on the gameOver screen, and
+// clicking/tapping its button) funnel through here - if the match that just
+// ended unlocked anything new (see evaluateGameEndUnlocks()), show that off
+// first instead of going straight back to character select.
 function goToCharacterSelectAfterGameOver() {
+  if (app.newlyUnlocked.length > 0) { app.screen = 'unlockReveal'; return; }
+  proceedToCharacterSelectAfterGameOver();
+}
+
+// The unlockReveal screen's own "continue" (Enter/tap) calls this directly
+// once it's done showing off whatever just unlocked.
+function dismissUnlockReveal() {
+  app.newlyUnlocked = [];
+  proceedToCharacterSelectAfterGameOver();
+}
+
+function proceedToCharacterSelectAfterGameOver() {
   if (pokiBreakPending) return;
   pokiCommercialBreak(() => {
     app.screen = IS_MOBILE ? 'mobileCharacterSelect' : (app.mode === 'versus' ? 'characterVersus' : 'characterSolo');
     app.player1Locked = false;
     app.player2Locked = false;
-    app.difficultyLocked = false;
+    app.cpuLocked = false;
     app.readyOpacity = 0;
     randomizeCharacterCursor(app.mode);
     resetMatchState();
@@ -1663,20 +2020,29 @@ function goToCharacterSelectAfterGameOver() {
 
 function handleSoloSelectKey(key) {
   if (key === 'escape') { goBackToModeSelect(); return; }
+  // Player card: browse with A/D (freely, including locked characters - the
+  // whole point of a content-locked card is to be teased while browsing),
+  // lock in with S (blocked for a still-locked character - see
+  // isPlayerUnlocked()).
   if (key === 'a') {
     app.player1Locked = false; app.readyOpacity = 0;
     app.player1Index = (app.player1Index + CHARACTERS.length - 1) % CHARACTERS.length;
   } else if (key === 'd') {
     app.player1Locked = false; app.readyOpacity = 0;
     app.player1Index = (app.player1Index + 1) % CHARACTERS.length;
-  } else if (key === 'arrowup') {
-    app.readyOpacity = 0;
-    app.difficultyIndex = (app.difficultyIndex + 1) % 3;
-  } else if (key === 'arrowdown') {
-    app.readyOpacity = 0;
-    app.difficultyIndex = (app.difficultyIndex + 2) % 3;
   } else if (key === 's') {
-    app.player1Locked = true;
+    if (isPlayerUnlocked(CHARACTERS[app.player1Index].key)) app.player1Locked = true;
+  // CPU card: same pattern, mirroring handleVersusSelectKey()'s P2 controls
+  // (arrow left/right to browse, arrow down to confirm) since arrows are
+  // otherwise unused on this screen.
+  } else if (key === 'arrowleft') {
+    app.cpuLocked = false; app.readyOpacity = 0;
+    app.cpuBatterIndex = (app.cpuBatterIndex + CHARACTERS.length - 1) % CHARACTERS.length;
+  } else if (key === 'arrowright') {
+    app.cpuLocked = false; app.readyOpacity = 0;
+    app.cpuBatterIndex = (app.cpuBatterIndex + 1) % CHARACTERS.length;
+  } else if (key === 'arrowdown') {
+    if (isCpuUnlocked(CHARACTERS[app.cpuBatterIndex].key)) app.cpuLocked = true;
   } else if (key === 'enter' && app.readyOpacity >= 80) {
     beginGame();
   }
@@ -1707,16 +2073,26 @@ function handleVersusSelectKey(key) {
 
 function startMatch() {
   app.screen = 'play';
-  // Solo starts with the human batting (homePitching=false -> assignActiveRoles()
-  // gives p1 the batter role, CPU pitches) instead of the old pitch-first
-  // default - versus mode is untouched, still p1 pitching/p2 batting first.
+  // Bug fix: solo used to start with homePitching=false (human batting
+  // first, CPU pitching) - but p1 is always the home team in solo (see
+  // battingTeamIsHome()'s comment below), and the home team never bats in
+  // the TOP of an inning. Starting that way put the human's first at-bat in
+  // a mislabeled "top of the 1st" (the scoreboard's arrow - see
+  // drawScoreboard() - correctly points up for homePitching=true/away
+  // batting, down for homePitching=false/home batting, so the arrow itself
+  // was never wrong, just contradicted by this override). Home always
+  // pitches first (top of the 1st, away bats), same as versus mode.
   // battingTeamIsHome() (=!homePitching) is derived from this same flag every
   // half-inning via assignActiveRoles(), so p1's runs always land under
   // "P1-Home" regardless of which role they start in - flipping the initial
   // value doesn't break that pairing.
-  app.homePitching = app.mode === 'solo' ? false : true;
+  app.homePitching = true;
   assignActiveRoles();
-  if (app.mode === 'solo') app.cpuBatterIndex = randRange(0, CHARACTERS.length);
+  // The CPU character is now chosen on the solo select screen (app.cpuBatterIndex
+  // is already set by then) rather than randomized - difficulty is derived from
+  // that choice's rank instead of being a separate manual picker (see
+  // characterDifficultyIndex()/PROGRESSION_ORDER).
+  if (app.mode === 'solo') app.difficultyIndex = characterDifficultyIndex(CHARACTERS[app.cpuBatterIndex].key);
   // Warm both active characters' sprite sets now, before the first
   // drawSprites() call needs them - avoids a blank/undefined-image frame
   // while the lazy loader's first fetch is still in flight.
@@ -1802,10 +2178,14 @@ function advanceTutorialDialog() {
 function startTutorial() {
   app.mode = 'solo';
   app.difficultyIndex = 0;
-  // The Scientist - a clear, readable power-up demo (Drone Ball) for the
-  // tutorial's pitching walkthrough.
-  app.player1Index = CHARACTERS.findIndex(c => c.key === 'scientist');
-  app.cpuBatterIndex = 1;
+  // Antman - unlocked by default, so a brand-new player's tutorial uses the
+  // exact power-ups (Ball Shrink pitch, Expand Shot bat) they'll actually
+  // have available the first time they play for real.
+  app.player1Index = CHARACTERS.findIndex(c => c.key === 'antman');
+  // Bruiser - looked up by key rather than a raw index, so this can't
+  // silently start pointing at a different character if CHARACTERS' order
+  // ever changes again (it already did once, for the progression system).
+  app.cpuBatterIndex = CHARACTERS.findIndex(c => c.key === 'bruiser');
   resetMatchState(); // also zeroes out every app.tutorial field - re-armed right below
   app.screen = 'play';
   app.tutorial.active = true;
@@ -2197,6 +2577,7 @@ function handleGameplayKey(key, repeat) {
   if (key === 'm' && humanBatting && app.batPowerFull && !app.diceRolling) {
     const power = batterChar().bat.key;
     app.batPowerFull = false;
+    app.humanUsedPowerThisGame = true; // for the "won without using a power-up" unlock condition
     // Only Gambler's Roll/Mirror Ball/Future Sight have power-up sounds among
     // the batting powers. Gambler's Roll and Mirror Ball don't play here -
     // their sound is tied to a later animation beat (see startDiceRoll() and
@@ -2224,51 +2605,62 @@ function handleGameplayKey(key, repeat) {
   // with the modifier attached so there is never a window where a second
   // pitch could be thrown mid-effect (see canStartPitch bug fix above).
   if (key === 'z' && humanPitching && app.pitchPowerFull && canStartPitch() && !ghostBalls[0].visible) {
-    const power = pitcherChar().pitch.key;
-    app.pitchPowerFull = false;
-    // Only Spin Cycle/Drone Ball/Gambler's Roll have power-up sounds among the
-    // pitching powers, and none of them play here - Spin Cycle's starts once
-    // the ball is actually spinning (stepSpinCycle()), Drone Ball's starts the
-    // instant it launches (applyPitchVelocity()), and Gambler's Roll's starts
-    // with the dice roll itself (startDiceRoll()). Everything else now
-    // activates silently.
-    // Void/Ghost/Meteor/SpinCycle/DroneBall/FastballPlus/Mirage/GamblerPitching all
-    // launch or play out their own in-flight sequence, so powerUpActive blocks a
-    // second pitch from being thrown mid-effect. Ball Shrink and Ice Ball are just
-    // instant modifiers now (no auto-pitch) - the pitcher keeps full control and can
-    // throw any WASD pitch immediately afterward, so they don't set powerUpActive.
-    if (power === 'void') { app.powerUpActive = true; app.voidActive = true; app.pitch = 'Fastball'; app.isPitching = true; }
-    else if (power === 'ghost') {
-      app.powerUpActive = true;
-      app.ghostActive = true;
-      app.pitch = 'Ghost'; // lets Future Sight (and anything else keyed off app.pitch) recognize it
-      const n = randRange(0, 3);
-      ghostBalls.forEach((g, i) => { g.visible = true; g.isReal = (i === n); g.x = toX(80); });
-    } else if (power === 'meteor') {
-      app.powerUpActive = true;
-      app.meteorActive = true; app.meteorX = lenX(70); app.meteorY = toLen(34); // exact old first-visible point - no pause before it appears, same fall after that (see applyPitchVelocity's Meteor case)
-      app.pitch = 'Meteor'; // lets Future Sight (and anything else keyed off app.pitch) recognize it
-    } else if (power === 'spinCycle') {
-      app.powerUpActive = true;
-      app.pitch = 'SpinCycle'; app.isPitching = true;
-    } else if (power === 'droneBall') {
-      app.powerUpActive = true;
-      app.pitch = 'DroneBall'; app.isPitching = true;
-    } else if (power === 'gamblerPitching') {
-      app.powerUpActive = true;
-      startDiceRoll(false);
-    } else if (power === 'ballShrink') {
-      ball.radius = toLen(1); // only shrinks the ball - pitcher still throws normally
-      app.pitcherSmall = true; // visual flourish: the pitcher shrinks along with the ball, for this pitch only
-    } else if (power === 'fastballPlus') {
-      app.powerUpActive = true;
-      app.pitch = 'FastballPlus'; app.isPitching = true;
-    } else if (power === 'iceBall') {
-      app.batterFrozen = true; // only slows the batter's crosshair - pitcher still throws normally
-    } else if (power === 'mirage') {
-      app.powerUpActive = true;
-      app.mirageCount += 1; app.pitch = 'Fastball'; app.isPitching = true;
-    }
+    app.humanUsedPowerThisGame = true; // for the "won without using a power-up" unlock condition
+    activatePitchPower();
+  }
+}
+
+// Activates whichever pitch power the current pitcher holds - extracted out
+// of the Z-key handler above so cpuPitch() can trigger the exact same
+// effects for a CPU pitcher (see CPU_POWER_CHANCE) instead of duplicating
+// this 10-branch chain. Deliberately has no idea whether a human or the CPU
+// called it - it only ever reads pitcherChar(), which already resolves to
+// whichever side is actually pitching.
+function activatePitchPower() {
+  const power = pitcherChar().pitch.key;
+  app.pitchPowerFull = false;
+  // Only Spin Cycle/Drone Ball/Gambler's Roll have power-up sounds among the
+  // pitching powers, and none of them play here - Spin Cycle's starts once
+  // the ball is actually spinning (stepSpinCycle()), Drone Ball's starts the
+  // instant it launches (applyPitchVelocity()), and Gambler's Roll's starts
+  // with the dice roll itself (startDiceRoll()). Everything else now
+  // activates silently.
+  // Void/Ghost/Meteor/SpinCycle/DroneBall/FastballPlus/Mirage/GamblerPitching all
+  // launch or play out their own in-flight sequence, so powerUpActive blocks a
+  // second pitch from being thrown mid-effect. Ball Shrink and Ice Ball are just
+  // instant modifiers now (no auto-pitch) - the pitcher keeps full control and can
+  // throw any WASD pitch immediately afterward, so they don't set powerUpActive.
+  if (power === 'void') { app.powerUpActive = true; app.voidActive = true; app.pitch = 'Fastball'; app.isPitching = true; }
+  else if (power === 'ghost') {
+    app.powerUpActive = true;
+    app.ghostActive = true;
+    app.pitch = 'Ghost'; // lets Future Sight (and anything else keyed off app.pitch) recognize it
+    const n = randRange(0, 3);
+    ghostBalls.forEach((g, i) => { g.visible = true; g.isReal = (i === n); g.x = toX(80); });
+  } else if (power === 'meteor') {
+    app.powerUpActive = true;
+    app.meteorActive = true; app.meteorX = lenX(70); app.meteorY = toLen(34); // exact old first-visible point - no pause before it appears, same fall after that (see applyPitchVelocity's Meteor case)
+    app.pitch = 'Meteor'; // lets Future Sight (and anything else keyed off app.pitch) recognize it
+  } else if (power === 'spinCycle') {
+    app.powerUpActive = true;
+    app.pitch = 'SpinCycle'; app.isPitching = true;
+  } else if (power === 'droneBall') {
+    app.powerUpActive = true;
+    app.pitch = 'DroneBall'; app.isPitching = true;
+  } else if (power === 'gamblerPitching') {
+    app.powerUpActive = true;
+    startDiceRoll(false);
+  } else if (power === 'ballShrink') {
+    ball.radius = toLen(1); // only shrinks the ball - pitcher still throws normally
+    app.pitcherSmall = true; // visual flourish: the pitcher shrinks along with the ball, for this pitch only
+  } else if (power === 'fastballPlus') {
+    app.powerUpActive = true;
+    app.pitch = 'FastballPlus'; app.isPitching = true;
+  } else if (power === 'iceBall') {
+    app.batterFrozen = true; // only slows the batter's crosshair - pitcher still throws normally
+  } else if (power === 'mirage') {
+    app.powerUpActive = true;
+    app.mirageCount += 1; app.pitch = 'Fastball'; app.isPitching = true;
   }
 }
 
@@ -2316,11 +2708,12 @@ function handlePointerDown(x, y) {
     return;
   }
   if (app.screen === 'mobileCharacterSelect') { handleMobileCharacterSelectTap(x, y); return; }
-  if (app.screen === 'mobileDifficultySelect') { handleMobileDifficultySelectTap(x, y); return; }
+  if (app.screen === 'mobileCpuSelect') { handleMobileCpuSelectTap(x, y); return; }
   if (app.screen === 'gameOver') {
     if (pointInGameOverButton(x, y)) goToCharacterSelectAfterGameOver();
     return;
   }
+  if (app.screen === 'unlockReveal') { dismissUnlockReveal(); return; }
   if (app.screen !== 'play') return;
   if (app.showQuitConfirm) {
     if (pointInQuitYesButton(x, y)) quitToModeSelect();
@@ -2453,7 +2846,7 @@ function drawBackButton(btn) {
 
 // Shared bottom-left prev/next triangle buttons + bottom-right Confirm
 // button used by both mobile select screens (mobileCharacterSelect and
-// mobileDifficultySelect) - same layout, same hit-testing, only the action
+// mobileCpuSelect) - same layout, same hit-testing, only the action
 // each screen wires them to differs. Sizes use toLen() for both dimensions
 // (not lenX() for width) so the buttons render as true squares instead of
 // stretching with the canvas's non-uniform X/Y scale - same reasoning as
@@ -2583,13 +2976,60 @@ function drawShoulderPowerIcons(cx, cy, w, h, charObj) {
   drawBadge(cx + offsetX, pitchIcons[charObj.key]);
 }
 
-function drawPortraitCard(cx, cy, w, h, charObj, locked, borderColor) {
+// Simple hand-drawn padlock glyph, matching the file's existing style of
+// vector-drawn UI icons (drawPauseIcon/drawArrowTriangle/drawFakeCursor) -
+// no external asset needed.
+function drawLockIcon(cx, cy, size) {
+  const bodyW = size * 0.72, bodyH = size * 0.56;
+  const bodyTop = cy - bodyH * 0.1;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+  ctx.lineWidth = size * 0.08;
+  ctx.beginPath();
+  ctx.arc(cx, bodyTop, size * 0.26, Math.PI, 0);
+  ctx.stroke();
+  ctx.restore();
+  rect(cx - bodyW / 2, bodyTop, bodyW, bodyH, 'rgba(25,25,28,0.95)', 1, 'rgba(255,255,255,0.92)', size * 0.05);
+  circle(cx, bodyTop + bodyH * 0.42, size * 0.07, 'rgba(255,255,255,0.9)', 1);
+}
+
+// contentLocked/conditionText: the "not yet unlocked" state (Solo mode's
+// progression system) - distinct from the `locked` param above, which
+// already meant "this player has confirmed their pick" (controls only the
+// card's border) before this feature existed and keeps that exact meaning.
+// A content-locked card still shows the name and both power-up icons as
+// normal (so it reads as a teaser, not a mystery) but silhouettes the
+// portrait art itself and overlays a lock icon + the unlock condition.
+function drawPortraitCard(cx, cy, w, h, charObj, locked, borderColor, contentLocked, conditionText) {
   rect(cx - w / 2, cy - h / 2, w, h, 'rgba(255,255,255,0.08)', 1, locked ? (borderColor || 'gold') : null, locked ? 5 : 0);
   const img = portraits[charObj.key];
   if (img.complete && img.naturalWidth) {
     const scale = Math.min(w / img.naturalWidth, h / img.naturalHeight) * 0.95;
     const iw = img.naturalWidth * scale, ih = img.naturalHeight * scale;
-    ctx.drawImage(img, cx - iw / 2, cy - ih / 2 + 10, iw, ih);
+    const ix = cx - iw / 2, iy = cy - ih / 2 + 10;
+    if (contentLocked) {
+      ctx.save();
+      ctx.drawImage(img, ix, iy, iw, ih);
+      // Silhouettes the portrait by filling FULLY OPAQUE black only where the
+      // art's own alpha channel already has pixels (source-atop), so the
+      // transparent background around the character stays transparent but
+      // every visible pixel of the character itself goes solid black - no
+      // hint of the original colors/details should show through.
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = 'black';
+      ctx.fillRect(ix, iy, iw, ih);
+      ctx.restore();
+    } else {
+      ctx.drawImage(img, ix, iy, iw, ih);
+    }
+  }
+  if (contentLocked) {
+    drawLockIcon(cx, cy + 6, Math.min(w, h) * 0.26);
+    if (conditionText) {
+      const lines = computeWrappedLines(conditionText, w - 20, 11, 700);
+      const startY = cy + h / 2 - 14 - (lines.length - 1) * 13;
+      lines.forEach((l, i) => text(l, cx, startY + i * 13, 11, '#e8d68a', 1, 'center', 700));
+    }
   }
   text(charObj.name, cx, cy - h / 2 - 18, 22, charObj.color, 1, 'center', 700);
   drawShoulderPowerIcons(cx, cy, w, h, charObj);
@@ -2617,7 +3057,8 @@ function drawMobileCharacterSelect() {
   text('Choose Your Character', CANVAS_W / 2, toY(40), 30, 'white', 1, 'center', 900);
 
   const char = CHARACTERS[app.player1Index];
-  drawPortraitCard(CANVAS_W / 2, toY(190), lenX(150), toLen(220), char, false, char.color);
+  drawPortraitCard(CANVAS_W / 2, toY(190), lenX(150), toLen(220), char, false, char.color,
+    !isPlayerUnlocked(char.key), playerUnlockConditionText(char.key));
 
   drawBackButton();
   drawMobileNavButtons();
@@ -2629,46 +3070,50 @@ function handleMobileCharacterSelectTap(x, y) {
   if (pointInBackButton(x, y)) { goBackToModeSelect(); return; }
   if (pointInMobileNavLeft(x, y)) { app.player1Index = (app.player1Index + CHARACTERS.length - 1) % CHARACTERS.length; return; }
   if (pointInMobileNavRight(x, y)) { app.player1Index = (app.player1Index + 1) % CHARACTERS.length; return; }
-  if (pointInMobileConfirm(x, y)) { app.player1Locked = true; app.screen = 'mobileDifficultySelect'; }
+  if (pointInMobileConfirm(x, y) && isPlayerUnlocked(CHARACTERS[app.player1Index].key)) {
+    app.player1Locked = true; app.screen = 'mobileCpuSelect';
+  }
 }
 
-function drawMobileDifficultySelect() {
+// Second mobile solo step: pick the CPU opponent, same content-locked
+// portrait card as the desktop solo screen's right-hand card. Difficulty is
+// no longer picked here (or anywhere) - it's derived from the chosen CPU
+// character's rank (see characterDifficultyIndex(), used in startMatch()).
+function drawMobileCpuSelect() {
   drawStadium();
   ctx.fillStyle = linearGradient(0, 0, 0, CANVAS_H, ['#8b5a2b', '#cd853f']);
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
   rect(0, 0, CANVAS_W, CANVAS_H, null, 1, 'black', 2);
 
-  text('CPU Difficulty', CANVAS_W / 2, toY(50), 34, 'white', 1, 'center', 900);
-
-  const diffBoxX = toX(125), diffBoxY = toY(120), diffBoxW = lenX(150), diffBoxH = toLen(110);
-  rect(diffBoxX, diffBoxY, diffBoxW, diffBoxH, 'rgba(255,255,255,0.08)', 1, 'white', 3);
-  text(DIFFICULTY_NAMES[app.difficultyIndex], diffBoxX + diffBoxW / 2, diffBoxY + diffBoxH / 2, 40,
-    DIFFICULTY_COLORS[app.difficultyIndex], 1, 'center', 900);
+  const cpu = CHARACTERS[app.cpuBatterIndex];
+  text('Choose Your Opponent', CANVAS_W / 2, toY(32), 26, 'white', 1, 'center', 900);
+  drawPortraitCard(CANVAS_W / 2, toY(190), lenX(150), toLen(220), cpu, false, cpu.color,
+    !isCpuUnlocked(cpu.key), cpuUnlockConditionText(cpu.key));
 
   drawBackButton();
 
-  if (app.difficultyLocked) {
+  if (app.cpuLocked) {
     if (app.readyOpacity < 80) app.readyOpacity = Math.min(80, app.readyOpacity + 5);
     drawReadyOverlay('Tap Anywhere To Start');
   } else {
     drawMobileNavButtons();
     drawMobileConfirmButton('Confirm');
-    text('◀ / ▶ To Change', CANVAS_W / 2, toY(300), 16, 'white', 0.85, 'center', 700);
+    text('◀ / ▶ To Browse', CANVAS_W / 2, toY(300), 16, 'white', 0.85, 'center', 700);
   }
 }
 
-function handleMobileDifficultySelectTap(x, y) {
+function handleMobileCpuSelectTap(x, y) {
   // Once locked, the ready overlay owns the whole screen - any tap starts
   // the game (readyOpacity's fade-in gate matches desktop's own Enter-To-
   // Start behavior, so a stray tap during the fade doesn't skip it).
-  if (app.difficultyLocked) {
+  if (app.cpuLocked) {
     if (app.readyOpacity >= 80) beginGame();
     return;
   }
   if (pointInBackButton(x, y)) { app.screen = 'mobileCharacterSelect'; app.player1Locked = false; app.readyOpacity = 0; return; }
-  if (pointInMobileNavLeft(x, y)) { app.difficultyIndex = (app.difficultyIndex + 2) % 3; return; }
-  if (pointInMobileNavRight(x, y)) { app.difficultyIndex = (app.difficultyIndex + 1) % 3; return; }
-  if (pointInMobileConfirm(x, y)) { app.difficultyLocked = true; }
+  if (pointInMobileNavLeft(x, y)) { app.cpuBatterIndex = (app.cpuBatterIndex + CHARACTERS.length - 1) % CHARACTERS.length; return; }
+  if (pointInMobileNavRight(x, y)) { app.cpuBatterIndex = (app.cpuBatterIndex + 1) % CHARACTERS.length; return; }
+  if (pointInMobileConfirm(x, y) && isCpuUnlocked(CHARACTERS[app.cpuBatterIndex].key)) { app.cpuLocked = true; }
 }
 
 function drawSoloSelect() {
@@ -2677,21 +3122,21 @@ function drawSoloSelect() {
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
   rect(0, 0, CANVAS_W, CANVAS_H, null, 1, 'black', 2);
 
-  text('Player', toX(100), toY(50), 34, 'white', 1, 'center', 900);
-  text('A / D To Browse   ·   S To Select', toX(100), toY(345), 16, 'white', 0.85);
+  const cpu = CHARACTERS[app.cpuBatterIndex];
+  text('Player', toX(100), toY(50), 30, 'white', 1, 'center', 900);
+  text('Opponent', toX(300), toY(50), 30, 'white', 1, 'center', 900);
+  text('A / D  ·  S To Select', toX(100), toY(345), 15, 'white', 0.85);
+  text('← / →  ·  Down To Select', toX(300), toY(345), 15, 'white', 0.85);
 
   const char = CHARACTERS[app.player1Index];
-  drawPortraitCard(toX(100), toY(200), lenX(150), toLen(220), char, app.player1Locked, char.color);
-
-  const diffBoxX = toX(225), diffBoxY = toY(140), diffBoxW = lenX(150), diffBoxH = toLen(110);
-  rect(diffBoxX, diffBoxY, diffBoxW, diffBoxH, 'rgba(255,255,255,0.08)');
-  text('CPU Difficulty', diffBoxX + diffBoxW / 2, diffBoxY + toLen(24), 22, 'white', 1, 'center', 900);
-  text(DIFFICULTY_NAMES[app.difficultyIndex], diffBoxX + diffBoxW / 2, diffBoxY + toLen(60), 32, DIFFICULTY_COLORS[app.difficultyIndex], 1, 'center', 900);
-  text('Up / Down To Change', diffBoxX + diffBoxW / 2, diffBoxY + toLen(93), 13, 'white', 0.8);
+  drawPortraitCard(toX(100), toY(200), lenX(150), toLen(220), char, app.player1Locked, char.color,
+    !isPlayerUnlocked(char.key), playerUnlockConditionText(char.key));
+  drawPortraitCard(toX(300), toY(200), lenX(150), toLen(220), cpu, app.cpuLocked, cpu.color,
+    !isCpuUnlocked(cpu.key), cpuUnlockConditionText(cpu.key));
 
   drawBackButton();
 
-  if (app.player1Locked) {
+  if (app.player1Locked && app.cpuLocked) {
     if (app.readyOpacity < 80) app.readyOpacity = Math.min(80, app.readyOpacity + 5);
     drawReadyOverlay();
   }
@@ -3351,6 +3796,46 @@ function drawGameOver() {
   text('Back To Menu', CANVAS_W / 2, by + bh / 2, GAME_OVER_BTN_TEXT_SIZE, 'white', 1, 'center', 900);
 }
 
+// Shown once, right after a solo match that unlocked something new - before
+// the player heads back to character select (see evaluateGameEndUnlocks()/
+// goToCharacterSelectAfterGameOver()). Lists every entry in app.newlyUnlocked
+// (both freshly-unlocked player characters and CPU roster advancement).
+function drawUnlockReveal() {
+  drawStadium();
+  rect(0, 0, CANVAS_W, CANVAS_H, 'black', 0.75);
+
+  const count = app.newlyUnlocked.length;
+  const plural = count > 1 ? 'S' : '';
+  text('NEW UNLOCK' + plural + '!', CANVAS_W / 2, 55, 36, 'gold', 1, 'center', 900);
+
+  // Row height (and everything scaled off it) shrinks to fit however many
+  // unlocks landed at once - several win-dependent conditions can plausibly
+  // fire from a single game, so this needs to hold up well past the 2-3
+  // entries the common case has, not just assume a short list.
+  const top = 100, bottom = CANVAS_H - 70;
+  const rowH = Math.min(90, (bottom - top) / Math.max(1, count));
+  const scale = Math.min(1, rowH / 90);
+  const startY = top + rowH / 2;
+
+  app.newlyUnlocked.forEach((u, i) => {
+    const cy = startY + i * rowH;
+    const c = CHARACTERS.find(ch => ch.key === u.key);
+    const cx = CANVAS_W / 2 - 150;
+    const r = 35 * scale;
+    circle(cx, cy, r, 'rgba(0,0,0,0.4)', 1, c ? c.color : 'gold', 3);
+    const img = portraits[u.key];
+    if (img && img.complete && img.naturalWidth) {
+      const imgScale = Math.min((r * 1.7) / img.naturalWidth, (r * 1.7) / img.naturalHeight);
+      const iw = img.naturalWidth * imgScale, ih = img.naturalHeight * imgScale;
+      ctx.drawImage(img, cx - iw / 2, cy - ih / 2, iw, ih);
+    }
+    text(u.name, cx + 75, cy - 10 * scale, Math.max(12, 22 * scale), c ? c.color : 'gold', 1, 'left', 900);
+    text(u.type === 'cpu' ? 'New Opponent Available' : 'New Character Unlocked', cx + 75, cy + 14 * scale, Math.max(9, 14 * scale), '#cccccc', 1, 'left', 600);
+  });
+
+  text('Tap or press Enter to continue ▶', CANVAS_W / 2, CANVAS_H - 35, 16, 'white', 0.85, 'center', 700);
+}
+
 function drawGameplay() {
   drawField();
   drawScoreboard();
@@ -3480,9 +3965,10 @@ function render() {
   else if (app.screen === 'characterSolo') drawSoloSelect();
   else if (app.screen === 'characterVersus') drawVersusSelect();
   else if (app.screen === 'mobileCharacterSelect') drawMobileCharacterSelect();
-  else if (app.screen === 'mobileDifficultySelect') drawMobileDifficultySelect();
+  else if (app.screen === 'mobileCpuSelect') drawMobileCpuSelect();
   else if (app.screen === 'play') drawGameplay();
   else if (app.screen === 'gameOver') drawGameOver();
+  else if (app.screen === 'unlockReveal') drawUnlockReveal();
 }
 
 /* ============================== HIT RESOLUTION ============================== */
@@ -3615,6 +4101,10 @@ function resolveHit() {
     // every swing, hit or miss - see attemptSwing()) - it erupts into an
     // actual cheer layered on top of the ambient loop.
     playSound(SOUNDS.crowdCheer);
+    // Stashed before either branch below clears app.pitch to '' - lets
+    // recordBaseHit() know what pitch type was actually hit, for the
+    // "hit off every pitch type" unlock condition.
+    app.lastPitchThrown = app.pitch;
     // Tutorial batting drills (bat_easy/bat_medium) only care that contact
     // happened at all, not what it turns into (single/double/ground out) -
     // see stepTutorial().
