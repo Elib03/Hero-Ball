@@ -931,11 +931,11 @@ let crosshairStyle = 'normal'; // normal | blackout
 // tapping another button doesn't steal or reset it. stepCrosshair() reads
 // dx/dy every tick to move the crosshair while touchId isn't null.
 const joystick = { touchId: null, dx: 0, dy: 0 };
-// 0-400 unit space, left side - y=335 keeps the whole circle's top edge
-// (335-35=300) right at the grass line instead of poking above it (grass
-// runs y:300-400, see drawField()), matching SWING_BUTTON/POWERUP_BUTTON's
-// shared row so all three batting controls line up together.
-const JOYSTICK_BASE = { x: 45, y: 335, radius: 35 };
+// 0-400 unit space, left side - shares its row center (y=350) with
+// SWING_BUTTON/POWERUP_BUTTON below so all three batting controls line up
+// together, moved down a bit further into the grass strip (y:300-400, see
+// drawField()) than dead-center of it, per request.
+const JOYSTICK_BASE = { x: 45, y: 350, radius: 35 };
 
 function resetBall() {
   ball.x = toX(61);
@@ -2165,10 +2165,11 @@ function showTutorialDialog(lines, onDone) {
   app.tutorial.revealProgress = 0; // first line starts typing in from scratch
 }
 
-// The tutorial is set up and its first dialogue line is already showing
-// before any input happens (see startTutorial()'s own comment - it runs
-// immediately at load, with no menu screen first), but gameplayStart()
-// itself has to wait for the player's actual first input per Poki's rules.
+// The tutorial's first dialogue line is already showing the moment
+// startTutorial() runs (from the Tutorial button on the main menu), before
+// any further input happens, but gameplayStart() itself has to wait for the
+// player's actual first input per Poki's rules - clicking the menu button
+// to get here counts as menu navigation, not gameplay starting yet.
 // Any real interaction with Coach's dialogue box - whether it fills in the
 // currently-typing line or advances past a finished one - IS that first
 // input. Already guarded (no-ops if already active), so it's safe to call
@@ -2193,16 +2194,14 @@ function advanceTutorialDialog() {
   }
 }
 
-// Called immediately at load (see the bottom of this file) instead of
-// waiting on a menu screen - Coach's first line is already showing before
-// any input has happened. gameplayStart() deliberately does NOT fire in
-// here, even though the tutorial drives the real 'play' screen/gameplay
-// code paths just like an actual match: Poki requires it fire on the
-// player's actual first input, not on load. advanceTutorialDialog() (the
-// very first thing a player can do - dismiss/advance Coach's line) is
-// where it actually fires. Also called again later to relaunch the
-// tutorial from the mode-select menu - same deferred-start behavior
-// applies then too, for consistency.
+// Reached via the Tutorial button on the main menu (the tutorial is
+// optional, not forced on every page load) or the Enter-key equivalent.
+// gameplayStart() deliberately does NOT fire in here, even though the
+// tutorial drives the real 'play' screen/gameplay code paths just like an
+// actual match: Poki requires it fire on the player's actual first
+// gameplay input, not on a menu click. advanceTutorialDialog() (the very
+// first thing a player can do once the tutorial screen is up - dismiss/
+// advance Coach's line) is where it actually fires.
 function startTutorial() {
   app.mode = 'solo';
   app.difficultyIndex = 0;
@@ -2505,17 +2504,19 @@ function wrapTutorialText(lines, x, y, size, weight, revealCount) {
 // coexist with the player actively moving the crosshair, unlike the normal
 // dialogue box below (which freezes update() - see stepTutorial()'s comment
 // on why it's a separate captionText field, not a dialogLines entry). A
-// slim banner tucked under the scoreboard (which occupies toY(8) to
-// toY(8)+toLen(75)=149.4px) keeps the ball/crosshair fully visible and
-// undimmed instead of the usual bottom-left coach portrait + big panel,
-// which would sit right on top of the play area at this ball height.
+// slim banner keeps the ball/crosshair fully visible and undimmed instead of
+// the usual bottom-left coach portrait + big panel, which would sit right on
+// top of the play area at this ball height.
+// Bug fix: sat right on top of BACK_BUTTON_INGAME/the Skip Tutorial button
+// on mobile (both occupy toY(90) to toY(90)+toLen(32)=219.6px) - panelY now
+// clears that row instead of overlapping it.
 function drawTutorialCaption() {
   const t = app.tutorial;
   if (!t.active || !t.captionText) return;
   const size = 18, weight = 700;
   const panelW = CANVAS_W * 0.62;
   const panelX = (CANVAS_W - panelW) / 2;
-  const panelY = 165;
+  const panelY = 235;
   const wrapped = computeWrappedLines(t.captionText, panelW - 40, size, weight);
   const lineHeight = toLen(size) * 1.3;
   const panelH = 34 + wrapped.length * lineHeight;
@@ -3392,11 +3393,11 @@ function drawPowerUpUi() {
 // drawPitchMenu()/drawPowerUpUi() already do (activePitcherKey/activeBatterKey
 // !== 'cpu'), so the two layouts never need to coexist.
 // Bigger than before (55 -> 70). All three batting controls share row
-// center y=335 - low enough that none of their top edges cross above the
-// grass line (y=300, see drawField()), but still in the upper half of the
-// grass strip (y:300-400) rather than sitting near the bottom.
-const SWING_BUTTON = { x: 315, y: 300, size: 70 };
-const POWERUP_BUTTON = { x: 173, y: 307.5, size: 55 }; // batting layout: bottom-center, between joystick and swing
+// center y=350 (moved down from the grass line at y=300 a bit further into
+// the grass strip, y:300-400, per request) rather than sitting right at its
+// top edge.
+const SWING_BUTTON = { x: 315, y: 315, size: 70 };
+const POWERUP_BUTTON = { x: 173, y: 322.5, size: 55 }; // batting layout: bottom-center, between joystick and swing
 // Pitching layout: same circular design as the batting one, sitting right
 // under the pitcher (PITCHER_FRAME_META centers around x~26-37 -> roughly
 // x:26-58 unit-wise once the sprite box is accounted for, feet at y~300).
@@ -5007,5 +5008,9 @@ function frame(ts) {
   requestAnimationFrame(frame);
 }
 
-startTutorial(); // session opens directly in the tutorial - see its own comment for why
+// Bug fix (requested): the tutorial used to launch automatically on every
+// page load, with no menu screen first - the user wants it optional instead,
+// so the game now just opens on the normal main menu (app.screen already
+// defaults to 'mode') and the player picks Tutorial from there like any
+// other mode, same as it already works for a relaunch from the menu.
 requestAnimationFrame(frame);
