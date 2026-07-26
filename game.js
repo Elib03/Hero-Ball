@@ -850,7 +850,7 @@ const app = {
   // duplicating the whole game loop.
   tutorial: {
     active: false,
-    practiceStep: null, // null | 'pitch' | 'bat_easy' | 'bat_medium' | 'bat_full'
+    practiceStep: null, // null | 'pitch' | 'bat_aim_demo' | 'bat_easy' | 'bat_full'
     dialogLines: [], // remaining lines of the current Coach dialogue; drawTutorialOverlay() shows dialogLines[0]
     onDialogDone: null, // called once the last line in dialogLines has been advanced past
     forcedPitch: null, // when set, cpuPitch() throws exactly this pitch instead of rolling one
@@ -874,6 +874,21 @@ const app = {
     // showTutorialDialog() and by advanceTutorialDialog() every time the
     // line actually changes.
     revealProgress: 0,
+    // Batting aim demo (bat_aim_demo, see beginBattingAimDemo()): a real
+    // pitch is thrown, then frozen mid-flight before it reaches the plate
+    // so the player can practice lining the crosshair up with a stationary
+    // target before ever having to time a moving one. Uses captionText (a
+    // lightweight, non-blocking banner - see drawTutorialOverlay()) instead
+    // of the normal dialogLines box, since the player needs to keep moving
+    // the mouse/crosshair while reading it - a real dialogLines entry
+    // freezes update() (and therefore the crosshair) entirely.
+    awaitingAimFreeze: false, // true from the moment the demo pitch launches until it crosses the freeze point
+    aimDemoFrozen: false, // true once the ball has actually stopped mid-flight
+    aimDemoOnTarget: false, // true once the crosshair has been detected on top of the frozen ball
+    aimDemoSwung: false, // set by attemptSwing() once the player swings while on-target
+    aimDemoTicks: 0, // ticks spent frozen-and-not-yet-on-target - drives the stuck-player nudge/auto-advance below
+    aimDemoHintShown: false,
+    captionText: '', // shown by drawTutorialOverlay() as a slim top banner while gameplay keeps running underneath
   },
 
   fireTuneActive: false, // debug: live fire-trail alignment tuning (press F)
@@ -1876,11 +1891,19 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', () => {});
 
 // Versus mode randomizes which character each cursor starts on, for
-// variety. Solo mode always starts the player cursor on Antman instead -
-// he's the one character guaranteed unlocked from the start, so a
-// brand-new player never lands on a locked (silhouetted) card by default.
+// variety. Solo mode always starts both cursors on Antman instead - he's
+// the one character guaranteed unlocked on both rosters from the start, so
+// a brand-new player never lands on a locked (silhouetted) card by default.
+// Bug fix: the CPU cursor used to just carry over whatever it was last set
+// to - including a leftover 'bruiser' from startTutorial() (which sets
+// app.cpuBatterIndex for its own scripted opponent), since the tutorial
+// runs automatically on page load before the player ever reaches this
+// screen for real. Explicitly resetting it here every time Solo is entered
+// closes that leak.
 function randomizeCharacterCursor(mode) {
-  app.player1Index = mode === 'solo' ? CHARACTERS.findIndex(c => c.key === 'antman') : randRange(0, CHARACTERS.length);
+  const antmanIndex = CHARACTERS.findIndex(c => c.key === 'antman');
+  app.player1Index = mode === 'solo' ? antmanIndex : randRange(0, CHARACTERS.length);
+  if (mode === 'solo') app.cpuBatterIndex = antmanIndex;
   if (mode === 'versus') app.player2Index = randRange(0, CHARACTERS.length);
 }
 
@@ -1947,6 +1970,11 @@ function resetMatchState() {
   app.tutorial.contactMade = false;
   app.tutorial.pitchingStrikeoutDone = false;
   app.tutorial.atBatResolved = false;
+  app.tutorial.awaitingAimFreeze = false;
+  app.tutorial.aimDemoFrozen = false;
+  app.tutorial.aimDemoOnTarget = false;
+  app.tutorial.aimDemoSwung = false;
+  app.tutorial.captionText = '';
 
   // Solo-mode progression counters - see their declarations on `app` above.
   app.maxDeficitThisGame = 0;
@@ -2223,10 +2251,39 @@ function beginPitchPractice() {
   app.tutorial.pitchHintShown = false;
 }
 
-function beginBattingEasy() {
+// A real pitch launches like any other, then gets frozen mid-flight (see
+// the update() hook keyed off this same threshold) well before it reaches
+// the plate - the freeze point sits comfortably right of the pitcher and
+// left of the strike zone/plate crossing (toX(355)), giving the player a
+// stationary target and plenty of room to move the crosshair onto it.
+const AIM_DEMO_FREEZE_X = 300;
+
+function beginBattingAimDemo() {
   app.tutorial.forceWhiffCpuBatter = false;
   app.tutorial.forceStrikeOnBall = false;
 
+  // Switch roles without touching score/innings: now the CPU pitches and the
+  // human bats - same as a real solo match's default starting configuration.
+  app.homePitching = false;
+  assignActiveRoles();
+  getPitcherFrames(pitcherChar().key);
+  getBatterFrames(batterChar().key);
+  clearCounts(true);
+  resetBall();
+
+  app.tutorial.practiceStep = 'bat_aim_demo';
+  app.tutorial.forcedPitch = 'EFastball'; // slow and dead straight - see beginBattingEasy()'s own note on why not Knuckleball
+  app.tutorial.awaitingAimFreeze = true;
+  app.tutorial.aimDemoFrozen = false;
+  app.tutorial.aimDemoOnTarget = false;
+  app.tutorial.aimDemoSwung = false;
+  app.tutorial.aimDemoTicks = 0;
+  app.tutorial.aimDemoHintShown = false;
+  app.tutorial.captionText = '';
+}
+
+function beginBattingEasy() {
+  app.tutorial.captionText = '';
   // Switch roles without touching score/innings: now the CPU pitches and the
   // human bats - same as a real solo match's default starting configuration.
   app.homePitching = false;
@@ -2243,16 +2300,6 @@ function beginBattingEasy() {
   // KNUCKLE_CHAOS_END_X). EFastball is a real straight, slow, predictable
   // pitch - the "really easy, straight line" starter this drill promises.
   app.tutorial.forcedPitch = 'EFastball';
-  app.tutorial.awaitingContact = true;
-  app.tutorial.battingMissCount = 0;
-  app.tutorial.battingHintShown = false;
-}
-
-function beginBattingMedium() {
-  clearCounts(true);
-  resetBall();
-  app.tutorial.practiceStep = 'bat_medium';
-  app.tutorial.forcedPitch = 'Fastball'; // faster, with a touch of rise - one notch harder than dead-straight
   app.tutorial.awaitingContact = true;
   app.tutorial.battingMissCount = 0;
   app.tutorial.battingHintShown = false;
@@ -2302,27 +2349,53 @@ function stepTutorial() {
     t.pitchingStrikeoutDone = false;
     showTutorialDialog([
       "Strikeout! Beautiful pitching, rookie!",
-      IS_MOBILE
-        ? "Now let's work on your batting. Drag the joystick to slide the crosshair around, and try to anticipate where the pitch will end up."
-        : "Now let's work on your batting. Move your mouse to slide the crosshair around, and try to anticipate where the pitch will end up.",
-      IS_MOBILE
-        ? "When the ball enters your crosshair, tap SWING. Timing is everything!"
-        : "When the ball enters your crosshair, click to swing. Timing is everything!",
-      "Let's start easy: a slow, straight pitch right down the middle. Take your time.",
+      "Now let's work on your batting. I'll walk you through it step by step - watch the ball!",
+    ], beginBattingAimDemo);
+    return;
+  }
+
+  // Batting aim demo: the ball is frozen mid-flight (see the update() hook
+  // near AIM_DEMO_FREEZE_X) while this runs every tick regardless of the
+  // dialogue-freeze state below, since the crosshair needs to keep moving.
+  if (t.aimDemoFrozen && !t.aimDemoOnTarget) {
+    if (dist(crosshairX, crosshairY, ball.x, ball.y) <= crosshairRadius) {
+      t.aimDemoOnTarget = true;
+      t.aimDemoTicks = 0;
+      t.captionText = IS_MOBILE ? 'Perfect! Now tap SWING!' : 'Perfect! Now click to swing!';
+    } else {
+      t.aimDemoTicks++;
+      if (t.aimDemoTicks === 400 && !t.aimDemoHintShown) { // ~10s at 40 ticks/sec
+        t.aimDemoHintShown = true;
+        t.captionText = IS_MOBILE
+          ? 'Move the joystick so your circle lands right on the ball.'
+          : 'Move your mouse so your circle lands right on the ball.';
+      } else if (t.aimDemoTicks >= 1200) { // ~30s total - never leave a stuck player blocked forever
+        t.aimDemoOnTarget = true;
+        t.captionText = IS_MOBILE ? 'Now tap SWING!' : 'Now click to swing!';
+      }
+    }
+  }
+
+  if (t.aimDemoSwung) {
+    t.aimDemoSwung = false;
+    t.aimDemoFrozen = false;
+    t.captionText = '';
+    showTutorialDialog([
+      "Great job! Aim, then swing right as the ball's inside your crosshair.",
+      "Let's try it for real - a slow, straight pitch right down the middle. Take your time.",
     ], beginBattingEasy);
     return;
   }
 
   if (t.contactMade) {
     t.contactMade = false;
-    if (t.practiceStep === 'bat_easy') {
-      showTutorialDialog(["Nice contact! Let's kick it up a notch."], beginBattingMedium);
-    } else if (t.practiceStep === 'bat_medium') {
-      showTutorialDialog([
-        "Great swing! Now let's put it all together: one real at-bat against an easy-mode pitcher.",
-        "Good luck out there!",
-      ], beginBattingFull);
-    }
+    showTutorialDialog([
+      "Nice contact! Now let's put it all together: one real at-bat against an easy-mode pitcher.",
+      IS_MOBILE
+        ? "Don't forget - tap your power-up icon for an edge if you need it!"
+        : "Don't forget - press M to use your power-up for an edge if you need it!",
+      "Good luck out there!",
+    ], beginBattingFull);
     return;
   }
 
@@ -2375,9 +2448,12 @@ function stepTutorial() {
     t.awaitingContact = false;
     t.battingMissCount = 0;
     t.battingHintShown = false;
+    // bat_easy is the only awaitingContact-gated step left (the "medium"
+    // step was removed - straight from the aim demo's easy pitch into the
+    // real at-bat), so this always leads to beginBattingFull() now.
     showTutorialDialog(
       ["No worries - let's keep moving. You'll get more chances in a real match!"],
-      t.practiceStep === 'bat_easy' ? beginBattingMedium : beginBattingFull
+      beginBattingFull
     );
   }
 }
@@ -2425,8 +2501,32 @@ function wrapTutorialText(lines, x, y, size, weight, revealCount) {
   }
 }
 
+// The batting aim demo's live instruction (see beginBattingAimDemo()) has to
+// coexist with the player actively moving the crosshair, unlike the normal
+// dialogue box below (which freezes update() - see stepTutorial()'s comment
+// on why it's a separate captionText field, not a dialogLines entry). A
+// slim banner tucked under the scoreboard (which occupies toY(8) to
+// toY(8)+toLen(75)=149.4px) keeps the ball/crosshair fully visible and
+// undimmed instead of the usual bottom-left coach portrait + big panel,
+// which would sit right on top of the play area at this ball height.
+function drawTutorialCaption() {
+  const t = app.tutorial;
+  if (!t.active || !t.captionText) return;
+  const size = 18, weight = 700;
+  const panelW = CANVAS_W * 0.62;
+  const panelX = (CANVAS_W - panelW) / 2;
+  const panelY = 165;
+  const wrapped = computeWrappedLines(t.captionText, panelW - 40, size, weight);
+  const lineHeight = toLen(size) * 1.3;
+  const panelH = 34 + wrapped.length * lineHeight;
+  rect(panelX, panelY, panelW, panelH, 'rgba(20,20,26,0.92)', 1, 'gold', 3);
+  text('COACH', panelX + 20, panelY + 20, 13, 'gold', 1, 'left', 900);
+  wrapped.forEach((line, i) => text(line, panelX + 20, panelY + 20 + (i + 1) * lineHeight, size, 'white', 1, 'left', weight));
+}
+
 function drawTutorialOverlay() {
   const t = app.tutorial;
+  drawTutorialCaption();
   if (!t.active || t.dialogLines.length === 0) return;
 
   rect(0, 0, CANVAS_W, CANVAS_H, 'black', 0.55);
@@ -2685,6 +2785,16 @@ const SWING_CONTACT_WINDOW = 4;
 
 function attemptSwing() {
   if (app.isBatting) return;
+  // Tutorial's batting aim demo: the ball is artificially frozen mid-flight
+  // for this step (see beginBattingAimDemo()), so a swing here is never
+  // meant to enter the real contact/resolveHit() pipeline - it's a pure
+  // "did they swing while on-target" check, picked up by stepTutorial().
+  // Swinging before reaching on-target is just silently ignored - no
+  // penalty, they simply keep aiming and try again.
+  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_aim_demo') {
+    if (app.tutorial.aimDemoOnTarget) app.tutorial.aimDemoSwung = true;
+    return;
+  }
   app.isBatting = true;
   app.checkHit = true;
   app.swingContactTicksLeft = SWING_CONTACT_WINDOW;
@@ -4625,6 +4735,20 @@ function update() {
   ball.y += ball.ySpeed;
   ball.x += ball.xSpeed;
 
+  // Tutorial's batting aim demo (bat_aim_demo): freeze the ball right where
+  // it is, mid-flight, well before it reaches the plate - see
+  // beginBattingAimDemo()/AIM_DEMO_FREEZE_X and stepTutorial()'s on-target
+  // detection, which keeps running every tick even while frozen.
+  if (app.tutorial.active && app.tutorial.awaitingAimFreeze && ball.visible && ball.x >= toX(AIM_DEMO_FREEZE_X)) {
+    app.tutorial.awaitingAimFreeze = false;
+    app.tutorial.aimDemoFrozen = true;
+    ball.xSpeed = 0;
+    ball.ySpeed = 0;
+    app.tutorial.captionText = IS_MOBILE
+      ? 'Move the joystick to line your crosshair up with the ball!'
+      : 'Move your mouse to line your crosshair up with the ball!';
+  }
+
   // Bug fix: stepIceShield() used to run at the very bottom of update(),
   // well after the generic plate-crossing check and Ghost Ball/Meteor's own
   // resolution logic. For fast pitches (SpinCycle's post-spin burst,
@@ -4790,7 +4914,13 @@ function update() {
   // guard would otherwise see "xSpeed 0, not pitching, no other power flag"
   // and immediately resetBall() the ball back to its resting spot before the
   // animation ever got a single frame to show the real contact point.
-  const genuinelyIdle = ball.xSpeed === 0 && !app.isPitching && !app.powerUpActive && !app.pauseAnimActive;
+  // Bug fix: the tutorial's batting aim demo deliberately holds ball.xSpeed
+  // at 0 while frozen mid-flight (see the freeze hook above) - without this
+  // exclusion, this same guard would see "xSpeed 0, not pitching, no other
+  // power flag" on the very next tick and immediately resetBall() the ball
+  // back to its resting spot before the player ever got a chance to aim at it.
+  const genuinelyIdle = ball.xSpeed === 0 && !app.isPitching && !app.powerUpActive && !app.pauseAnimActive
+    && !(app.tutorial.active && app.tutorial.aimDemoFrozen);
   // Second bug fix: once the ball is ALREADY sitting at rest, calling
   // resetBall() again every single idle tick was destructive - resetBall()
   // unconditionally zeroes ball.radius, app.batterFrozen and the swing/pitch
