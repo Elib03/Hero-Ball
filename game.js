@@ -1774,6 +1774,18 @@ function activateCpuBatPower() {
   applyContactTier(tier);
 }
 
+// [whiffBoundary, singleBoundary, doubleBoundary] out of 1000, indexed by
+// app.difficultyIndex - anything beyond doubleBoundary is a Home Run. Total
+// hit rate (1000 - whiffBoundary) is 20% Easy / 24.5% Normal (the original,
+// unchanged, rate) / 28% Hard (requested), with the Single/Double/Home Run
+// split within that hit rate kept at the original ~70/20/10 proportions for
+// all three, just scaled to each difficulty's overall rate.
+const CPU_BAT_ODDS_BY_DIFFICULTY = [
+  [800, 940, 980], // Easy - 20% hit rate (140 Single / 40 Double / 20 HR)
+  [755, 927, 976], // Normal - 24.5% hit rate (172 Single / 49 Double / 24 HR)
+  [720, 917, 973], // Hard - 28% hit rate (197 Single / 56 Double / 27 HR)
+];
+
 function cpuSwing() {
   app.cpuSwung = true;
   // Tutorial pitching drill: guarantee the strikeout instead of leaving it to
@@ -1806,14 +1818,16 @@ function cpuSwing() {
     app.isBatting = true;
     app.swung = true;
     ball.accel = -toLen(0.2);
-    // 24.5% overall chance of making contact; of that contact, 70% Single,
-    // 20% Double, 10% Home Run. Rolled out of 1000 for exact percentages:
-    // 755 whiff / 172 Single / 49 Double / 24 Home Run (172+49+24=245=24.5%).
+    // Overall contact odds now scale with difficulty (requested) - the
+    // Single/Double/Home Run split within that contact rate keeps the
+    // original ~70/20/10 proportions (see CPU_BAT_ODDS_BY_DIFFICULTY),
+    // just scaled up or down together with the total hit rate.
+    const [whiffB, singleB, doubleB] = CPU_BAT_ODDS_BY_DIFFICULTY[app.difficultyIndex];
     const roll = randRange(0, 1000);
-    if (roll < 755) { /* whiff - 75.5% */ }
-    else if (roll < 927) { ball.xSpeed = -lenX(randRange(10, 20)); ball.ySpeed = -toLen(randRange(7, 12)); } // Single - 17.2%
-    else if (roll < 976) { ball.xSpeed = -lenX(randRange(24, 28)); ball.ySpeed = -toLen(randRange(18, 22)); } // Double - 4.9%
-    else { ball.xSpeed = -lenX(40); ball.ySpeed = -toLen(20); app.homeRun = true; } // Home Run - 2.4%
+    if (roll < whiffB) { /* whiff */ }
+    else if (roll < singleB) { ball.xSpeed = -lenX(randRange(10, 20)); ball.ySpeed = -toLen(randRange(7, 12)); } // Single
+    else if (roll < doubleB) { ball.xSpeed = -lenX(randRange(24, 28)); ball.ySpeed = -toLen(randRange(18, 22)); } // Double
+    else { ball.xSpeed = -lenX(40); ball.ySpeed = -toLen(20); app.homeRun = true; } // Home Run
   }
 }
 
@@ -2101,20 +2115,20 @@ function handleVersusSelectKey(key) {
 
 function startMatch() {
   app.screen = 'play';
-  // Bug fix: solo used to start with homePitching=false (human batting
-  // first, CPU pitching) - but p1 is always the home team in solo (see
-  // battingTeamIsHome()'s comment below), and the home team never bats in
-  // the TOP of an inning. Starting that way put the human's first at-bat in
-  // a mislabeled "top of the 1st" (the scoreboard's arrow - see
-  // drawScoreboard() - correctly points up for homePitching=true/away
-  // batting, down for homePitching=false/home batting, so the arrow itself
-  // was never wrong, just contradicted by this override). Home always
-  // pitches first (top of the 1st, away bats), same as versus mode.
+  // Solo starts with the human batting first, CPU pitching first (requested)
+  // - versus mode is untouched, still p1 pitching/p2 batting first. Note
+  // this means the scoreboard's inning arrow (see drawScoreboard(), which
+  // correctly points up for homePitching=true/away-batting and down for
+  // homePitching=false/home-batting) will show "bottom of the 1st" during
+  // that first at-bat, since p1 is always the home team in solo (see
+  // battingTeamIsHome()'s comment below) and home never bats in a real
+  // top-of-inning - a deliberate trade-off for batting first over the label
+  // being technically accurate that first half-inning.
   // battingTeamIsHome() (=!homePitching) is derived from this same flag every
   // half-inning via assignActiveRoles(), so p1's runs always land under
   // "P1-Home" regardless of which role they start in - flipping the initial
   // value doesn't break that pairing.
-  app.homePitching = true;
+  app.homePitching = app.mode === 'solo' ? false : true;
   assignActiveRoles();
   // The CPU character is now chosen on the solo select screen (app.cpuBatterIndex
   // is already set by then) rather than randomized - difficulty is derived from
