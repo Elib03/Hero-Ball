@@ -889,6 +889,13 @@ const app = {
     aimDemoTicks: 0, // ticks spent frozen-and-not-yet-on-target - drives the stuck-player nudge/auto-advance below
     aimDemoHintShown: false,
     captionText: '', // shown by drawTutorialOverlay() as a slim top banner while gameplay keeps running underneath
+    // The closing at-bat (bat_full) forces the CPU pitcher to use its own
+    // power-up on the very first eligible pitch (see cpuPitch()) instead of
+    // leaving it to the same random per-pitch roll a real match uses - a
+    // short tutorial at-bat might not have enough pitches left for that roll
+    // to ever fire on its own, and the player should get to see this happen
+    // at least once during the tutorial.
+    cpuShouldDemoPower: false,
   },
 
   fireTuneActive: false, // debug: live fire-trail alignment tuning (press F)
@@ -1296,10 +1303,11 @@ function battingTeamIsHome() { return !app.homePitching; }
 
 function scoreRun() {
   if (battingTeamIsHome()) homeScore++; else awayScore++;
-  // Solo mode: p1 is always homeScore for the whole match (see startMatch()'s
-  // comment) - track the largest deficit the human has faced, for the
-  // "won after trailing by 3+" unlock condition (evaluateGameEndUnlocks()).
-  if (app.mode === 'solo') app.maxDeficitThisGame = Math.max(app.maxDeficitThisGame, awayScore - homeScore);
+  // Solo mode: p1 is always awayScore for the whole match (see
+  // assignActiveRoles()'s comment - p1 is the away team there, so it bats
+  // first) - track the largest deficit the human has faced, for the "won
+  // after trailing by 3+" unlock condition (evaluateGameEndUnlocks()).
+  if (app.mode === 'solo') app.maxDeficitThisGame = Math.max(app.maxDeficitThisGame, homeScore - awayScore);
 }
 
 function clearCounts(clearOuts) {
@@ -1470,7 +1478,9 @@ function switchSides() {
         // (see handlePointerDown()/the keydown dispatcher's 'gameOver' case)
         // triggers goToCharacterSelectAfterGameOver(), which resets
         // homeScore/awayScore back to 0.
-        app.gameOverP1Wins = homeScore > awayScore;
+        // p1 is home in versus but away in solo (see assignActiveRoles()'s
+        // comment), so which score means "p1 won" flips by mode.
+        app.gameOverP1Wins = app.mode === 'solo' ? awayScore > homeScore : homeScore > awayScore;
         if (app.mode === 'solo') evaluateGameEndUnlocks();
         app.screen = 'gameOver';
         pokiGameplayStop();
@@ -1487,7 +1497,9 @@ function switchSides() {
 // post-game unlockReveal screen (see goToCharacterSelectAfterGameOver()).
 function evaluateGameEndUnlocks() {
   if (app.gameOverP1Wins) {
-    if (homeScore >= 10) unlockCharacter('player', 'pyro');
+    // Only ever called for solo (see switchSides()'s call site), where p1
+    // is the away team - awayScore is the human's own score here.
+    if (awayScore >= 10) unlockCharacter('player', 'pyro');
     if (app.maxDeficitThisGame >= 3) unlockCharacter('player', 'gambler');
     if (!app.humanUsedPowerThisGame) unlockCharacter('player', 'shadow');
     if (app.hitsAllowedByHumanThisGame === 0) unlockCharacter('player', 'strategist');
@@ -1508,9 +1520,16 @@ function evaluateGameEndUnlocks() {
 
 function assignActiveRoles() {
   if (app.mode === 'solo') {
-    if (app.homePitching) { app.activePitcherKey = 'p1'; app.activeBatterKey = 'cpu'; }
+    // p1 is the AWAY team in solo (bats first, correctly in the top of the
+    // 1st - see startMatch()'s comment) - cpu is home (pitches first,
+    // fields while away bats). battingTeamIsHome()/scoreRun() below follow
+    // from this: p1's runs land in awayScore, cpu's in homeScore, for the
+    // whole match.
+    if (app.homePitching) { app.activePitcherKey = 'cpu'; app.activeBatterKey = 'p1'; }
     else {
-      app.activePitcherKey = 'cpu'; app.activeBatterKey = 'p1';
+      app.activePitcherKey = 'p1'; app.activeBatterKey = 'cpu';
+    }
+    if (app.activeBatterKey === 'p1') {
       // A fresh half-inning of human batting is starting (called from
       // startMatch() or switchSides(), never mid-turn) - Oracle's "every
       // pitch type in one inning" condition gets a clean slate each time.
@@ -1841,6 +1860,15 @@ function cpuPitch() {
     app.isPitching = true;
     return;
   }
+  // Tutorial's closing at-bat: guarantee the player actually sees the CPU
+  // pitcher use its power-up (see app.tutorial.cpuShouldDemoPower's own
+  // comment) instead of leaving it entirely to the random roll below, which
+  // might never fire in a short tutorial at-bat.
+  if (app.tutorial.active && app.tutorial.cpuShouldDemoPower && app.pitchPowerFull && !ghostBalls[0].visible) {
+    app.tutorial.cpuShouldDemoPower = false;
+    activatePitchPower();
+    return;
+  }
   // CPU power-up usage: functions identically to the human Z key (see
   // activatePitchPower()) - just rolled randomly instead of key-pressed.
   // Same !ghostBalls[0].visible guard the Z-key handler uses (a narrow race
@@ -1989,6 +2017,7 @@ function resetMatchState() {
   app.tutorial.aimDemoOnTarget = false;
   app.tutorial.aimDemoSwung = false;
   app.tutorial.captionText = '';
+  app.tutorial.cpuShouldDemoPower = false;
 
   // Solo-mode progression counters - see their declarations on `app` above.
   app.maxDeficitThisGame = 0;
@@ -2115,20 +2144,18 @@ function handleVersusSelectKey(key) {
 
 function startMatch() {
   app.screen = 'play';
-  // Solo starts with the human batting first, CPU pitching first (requested)
-  // - versus mode is untouched, still p1 pitching/p2 batting first. Note
-  // this means the scoreboard's inning arrow (see drawScoreboard(), which
-  // correctly points up for homePitching=true/away-batting and down for
-  // homePitching=false/home-batting) will show "bottom of the 1st" during
-  // that first at-bat, since p1 is always the home team in solo (see
-  // battingTeamIsHome()'s comment below) and home never bats in a real
-  // top-of-inning - a deliberate trade-off for batting first over the label
-  // being technically accurate that first half-inning.
-  // battingTeamIsHome() (=!homePitching) is derived from this same flag every
-  // half-inning via assignActiveRoles(), so p1's runs always land under
-  // "P1-Home" regardless of which role they start in - flipping the initial
-  // value doesn't break that pairing.
-  app.homePitching = app.mode === 'solo' ? false : true;
+  // Both modes now start homePitching=true - this is what makes the
+  // scoreboard's inning arrow (see drawScoreboard(), up for homePitching=
+  // true/away-batting, down for homePitching=false/home-batting) correctly
+  // read "top of the 1st" on the very first half-inning, and it's also what
+  // the inningNumber++ check in switchSides() assumes (it only advances once
+  // homePitching returns to true, i.e. once BOTH halves of an inning are
+  // done - starting from false used to make that fire a half-inning early).
+  // Solo's assignActiveRoles() gives p1 the batter role exactly when
+  // homePitching is true (p1 is the AWAY team there, see its own comment),
+  // so the human still bats first even though the flag starts true - versus
+  // mode is unaffected, still p1 pitching/p2 batting first as before.
+  app.homePitching = true;
   assignActiveRoles();
   // The CPU character is now chosen on the solo select screen (app.cpuBatterIndex
   // is already set by then) rather than randomized - difficulty is derived from
@@ -2233,8 +2260,10 @@ function startTutorial() {
 
   // Pitching first: the human throws (WASD/Z on desktop, on-screen
   // buttons on mobile - see drawPitchButtons()/drawMobileControls()), the
-  // CPU bats.
-  app.homePitching = true;
+  // CPU bats. Solo's assignActiveRoles() gives p1 the pitcher role when
+  // homePitching is false (p1 is the away team there, and away pitches
+  // once homePitching flips to false - see that function's own comment).
+  app.homePitching = false;
   assignActiveRoles();
   getPitcherFrames(pitcherChar().key);
   getBatterFrames(batterChar().key);
@@ -2276,8 +2305,10 @@ function beginBattingAimDemo() {
   app.tutorial.forceStrikeOnBall = false;
 
   // Switch roles without touching score/innings: now the CPU pitches and the
-  // human bats - same as a real solo match's default starting configuration.
-  app.homePitching = false;
+  // human bats - same as a real solo match's default starting configuration
+  // (solo's assignActiveRoles() gives p1 the batter role when homePitching
+  // is true - p1 is the away team there, and away bats first).
+  app.homePitching = true;
   assignActiveRoles();
   getPitcherFrames(pitcherChar().key);
   getBatterFrames(batterChar().key);
@@ -2298,8 +2329,10 @@ function beginBattingAimDemo() {
 function beginBattingEasy() {
   app.tutorial.captionText = '';
   // Switch roles without touching score/innings: now the CPU pitches and the
-  // human bats - same as a real solo match's default starting configuration.
-  app.homePitching = false;
+  // human bats - same as a real solo match's default starting configuration
+  // (solo's assignActiveRoles() gives p1 the batter role when homePitching
+  // is true - p1 is the away team there, and away bats first).
+  app.homePitching = true;
   assignActiveRoles();
   getPitcherFrames(pitcherChar().key);
   getBatterFrames(batterChar().key);
@@ -2329,6 +2362,7 @@ function beginBattingFull() {
   // real strikeout/walk/out must be able to fire normally here.
   app.tutorial.forceWhiffCpuBatter = false;
   app.tutorial.forceStrikeOnBall = false;
+  app.tutorial.cpuShouldDemoPower = true;
 }
 
 function finishTutorial() {
@@ -2653,7 +2687,9 @@ function handleGameplayKey(key, repeat) {
 
   const humanPitching = app.activePitcherKey !== 'cpu';
   const humanBatting = app.activeBatterKey !== 'cpu';
-  const usesWasd = app.homePitching; // home side always uses WASD, away side always uses arrows
+  // Solo only ever has one human, who always uses WASD regardless of home/away.
+  // Versus keeps the original home=WASD/away=arrows split (p1 is always home there).
+  const usesWasd = app.mode === 'solo' ? true : app.homePitching;
 
   // Bug fix: this used to be a blanket `if (ghostBalls[0].visible) return;`
   // at the top of the function, which also blocked the M-key entirely - the
@@ -3316,10 +3352,15 @@ function drawScoreboard() {
   // the header itself runs y 8-33) is 50 units tall, so its center is y=58 -
   // the score numbers and base triangle both target that so they sit with
   // equal gaps from the header above and the box's bottom edge below.
-  text('P1-Home', toX(50), toY(20), 16, 'red', 1);
-  text(String(homeScore), toX(50), toY(58), 35, 'red', 1);
-  text('P2-Away', toX(150), toY(20), 16, 'rgb(80,150,220)', 1);
-  text(String(awayScore), toX(150), toY(58), 35, 'rgb(90,160,230)', 1);
+  // p1 is home in versus but away in solo (see assignActiveRoles()'s
+  // comment) - p1's own score/label always sits in the same left/red slot
+  // either way, it's just paired with the score variable that's actually
+  // tracking p1 for the current mode.
+  const soloMode = app.mode === 'solo';
+  text(soloMode ? 'P1-Away' : 'P1-Home', toX(50), toY(20), 16, 'red', 1);
+  text(String(soloMode ? awayScore : homeScore), toX(50), toY(58), 35, 'red', 1);
+  text(soloMode ? 'CPU-Home' : 'P2-Away', toX(150), toY(20), 16, 'rgb(80,150,220)', 1);
+  text(String(soloMode ? homeScore : awayScore), toX(150), toY(58), 35, 'rgb(90,160,230)', 1);
 
   // Inning number + ordinal suffix drawn tight together as one unit
   const inningAnchorX = toX(240);
@@ -3355,7 +3396,8 @@ function drawPitchMenu() {
   // always has a human pitching (just not necessarily the one currently
   // looking at this side of the screen), so it stays shown there.
   if (app.mode === 'solo' && app.activePitcherKey === 'cpu') return;
-  const entries = app.homePitching
+  const usesWasd = app.mode === 'solo' ? true : app.homePitching;
+  const entries = usesWasd
     ? [['W', 'Fastball'], ['A', 'Knuckleball'], ['S', 'Curveball'], ['D', 'Riser']]
     : [['↑', 'Fastball'], ['←', 'Knuckleball'], ['↓', 'Curveball'], ['→', 'Riser']];
   const boxSize = toLen(20); // uniform (not lenX) so the key square stays square, not stretched
@@ -3554,8 +3596,9 @@ function handleMobilePlayTap(x, y) {
     if (pointInSwingButton(x, y)) { attemptSwing(); return; }
     if (pointInPowerupButton(POWERUP_BUTTON, x, y)) { handleGameplayKey('m'); return; }
   } else if (app.activePitcherKey !== 'cpu') {
+    const usesWasd = app.mode === 'solo' ? true : app.homePitching;
     for (const p of PITCH_BUTTONS) {
-      if (pointInPitchButton(p, x, y)) { handleGameplayKey(app.homePitching ? p.key : p.arrowKey); return; }
+      if (pointInPitchButton(p, x, y)) { handleGameplayKey(usesWasd ? p.key : p.arrowKey); return; }
     }
     if (pointInPowerupButton(POWERUP_BUTTON_PITCHING, x, y)) { handleGameplayKey('z'); return; }
   }
@@ -3914,7 +3957,7 @@ function drawGameOver() {
   rect(0, 0, CANVAS_W, CANVAS_H, 'black', 0.6);
 
   text('GAME OVER', CANVAS_W / 2, CANVAS_H / 2 - 90, 46, 'white', 1, 'center', 900);
-  text(app.gameOverP1Wins ? 'P1 WINS!' : 'P2 WINS!', CANVAS_W / 2, CANVAS_H / 2 - 30, 30, 'gold', 1, 'center', 900);
+  text(app.gameOverP1Wins ? 'P1 WINS!' : (app.mode === 'solo' ? 'CPU WINS!' : 'P2 WINS!'), CANVAS_W / 2, CANVAS_H / 2 - 30, 30, 'gold', 1, 'center', 900);
 
   const { bx, by, bw, bh } = gameOverButtonRect();
   rect(bx, by, bw, bh, 'rgba(210,30,30,0.85)', 1, 'white', 2);
