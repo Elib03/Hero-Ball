@@ -2546,11 +2546,14 @@ function stepTutorial() {
   // below) once pitchIntroPhase goes back to null.
   if (t.practiceStep === 'pitch' && t.pitchIntroPhase) {
     if (t.pitchIntroPhase === 'pressW') {
-      // Wait for the pitch to actually land (forceStrikeOnBall guarantees
-      // that's a Strike), not just for it to launch - the "4 pitches" caption
-      // should appear once they've actually seen the strike called, not the
-      // instant the ball leaves their hand.
-      if (app.isPitching) {
+      // Wait for the ball to actually cross the plate and resolve (forceStrikeOnBall
+      // guarantees that's a Strike) before showing the "4 pitches" caption -
+      // ball.visible is true for exactly the ball's real flight (set the
+      // instant the windup finishes, cleared by resetBall() the instant it
+      // crosses toX(355) and gets called). app.isPitching alone isn't late
+      // enough for this - it only covers the windup animation itself, going
+      // false again the moment the ball actually launches.
+      if (ball.visible) {
         t.pitchIntroWaitingForResolve = true;
       } else if (t.pitchIntroWaitingForResolve) {
         t.pitchIntroWaitingForResolve = false;
@@ -2573,7 +2576,10 @@ function stepTutorial() {
         t.captionText = IS_MOBILE ? 'Now tap a pitch button to throw it!' : 'Now throw your pitch!';
       }
     } else if (t.pitchIntroPhase === 'throwPowerPitch') {
-      if (app.isPitching) {
+      // Same ball.visible-based wait as the pressW phase above - the "once
+      // per inning" caption should only appear once this pitch has actually
+      // crossed the plate too.
+      if (ball.visible) {
         t.pitchIntroWaitingForResolve = true;
       } else if (t.pitchIntroWaitingForResolve) {
         t.pitchIntroWaitingForResolve = false;
