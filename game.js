@@ -945,7 +945,7 @@ const app = {
   // duplicating the whole game loop.
   tutorial: {
     active: false,
-    practiceStep: null, // null | 'pitch' | 'bat_aim_demo' | 'bat_easy' | 'bat_full'
+    practiceStep: null, // null | 'pitch' | 'bat_aim_demo' | 'bat_easy' | 'bat_easy_power' | 'bat_full'
     dialogLines: [], // remaining lines of the current Coach dialogue; drawTutorialOverlay() shows dialogLines[0]
     onDialogDone: null, // called once the last line in dialogLines has been advanced past
     forcedPitch: null, // when set, cpuPitch() throws exactly this pitch instead of rolling one
@@ -955,14 +955,27 @@ const app = {
     contactMade: false, // set by resolveHit() once contact happens during awaitingContact
     pitchingStrikeoutDone: false, // set once the scripted pitching drill's strikeout lands
     atBatResolved: false, // set once the closing full at-bat concludes (hit/walk/out)
-    // Stuck-player safety nets (see stepTutorial()) - batting timing is a
+    // Stuck-player safety net (see stepTutorial()) - batting timing is a
     // real skill unlike pitching (any keypress is valid there), so without
-    // these a player who doesn't understand the crosshair can whiff the
+    // this a player who doesn't understand the crosshair can whiff the
     // same forced pitch forever with zero feedback.
-    pitchIdleTicks: 0, // ticks since pitch practice began with no pitch thrown yet
-    pitchHintShown: false, // true once either the "press W" nudge has fired, or it's no longer needed
     battingMissCount: 0, // consecutive whiffs in the current batting drill
     battingHintShown: false, // true once this drill's crosshair-timing hint has fired
+    // Guided pitching intro (see beginPitchPractice()/stepTutorial()): walks
+    // the player through one plain pitch, points out the pitch menu, then one
+    // power-up pitch - via the non-blocking captionText banner rather than a
+    // blocking dialogLines box, so gameplay never pauses. null once done,
+    // falling through into the ordinary "throw pitches until you strike them
+    // out" tail that was already there.
+    pitchIntroPhase: null, // null | 'pressW' | 'sawPitches' | 'pressZ' | 'throwPowerPitch' | 'toldOnce'
+    introTicks: 0, // drives the timed auto-advance for pitchIntroPhase's two purely-informational beats
+    // Batting power drill (bat_easy_power, see beginBattingEasyWithPower()):
+    // cpuPitch() won't actually throw the forced pitch while this is true,
+    // so the player must use their power-up BEFORE any pitch arrives - contact
+    // is then only ever reachable once it's already been used, no separate
+    // check needed at the moment contact happens.
+    requirePowerBeforePitch: false,
+    powerDrillTicks: 0, // ticks spent waiting for the player to press M during requirePowerBeforePitch - stuck-player safety net
     // Typewriter reveal for whichever line is current (see stepTutorial()'s
     // per-tick increment and drawTutorialOverlay()'s partial draw) - how
     // many characters of dialogLines[0] are shown so far. Reset to 0 by
@@ -1961,11 +1974,15 @@ function cpuSwing() {
 }
 
 function cpuPitch() {
-  // Tutorial batting drills (bat_easy/bat_medium) script an exact pitch
+  // Tutorial batting drills (bat_easy/bat_easy_power) script an exact pitch
   // instead of the CPU's normal random selection, so the difficulty ramps up
   // exactly the way the drill promises. bat_full leaves forcedPitch null and
   // falls through to the real Easy-difficulty roll below.
   if (app.tutorial.active && app.tutorial.forcedPitch) {
+    // bat_easy_power: withhold the pitch entirely until the player has
+    // actually used their power-up (see beginBattingEasyWithPower()) -
+    // batPowerFull only goes false once M has genuinely been pressed.
+    if (app.tutorial.requirePowerBeforePitch && app.batPowerFull) return;
     app.pitch = app.tutorial.forcedPitch;
     app.isPitching = true;
     return;
@@ -2145,6 +2162,10 @@ function resetMatchState() {
   app.tutorial.aimDemoSwung = false;
   app.tutorial.captionText = '';
   app.tutorial.cpuShouldDemoPower = false;
+  app.tutorial.pitchIntroPhase = null;
+  app.tutorial.introTicks = 0;
+  app.tutorial.requirePowerBeforePitch = false;
+  app.tutorial.powerDrillTicks = 0;
 
   // Solo-mode progression counters - see their declarations on `app` above.
   app.maxDeficitThisGame = 0;
@@ -2411,19 +2432,12 @@ function startTutorial() {
   getBatterFrames(batterChar().key);
   resetBall();
 
-  // Mobile has its own on-screen pitch buttons (already labeled Fastball/
-  // Knuckleball/Curveball/Riser - see drawPitchButtons()) instead of WASD,
-  // so the keyboard-mapping line is both wrong and unnecessary there.
+  // Just the opening greeting stays a blocking dialogue line - everything
+  // after it (see beginPitchPractice()/stepTutorial()) is delivered via the
+  // non-blocking caption banner instead, with the coach talking "from the
+  // side" while the game keeps running and the player can act immediately.
   showTutorialDialog([
     "Hey, rookie! I'm Coach. Let's get you ready for the big leagues.",
-    IS_MOBILE
-      ? "First up: pitching. Tap a button to pick your pitch."
-      : "First up: pitching. Use these keys to pick your pitch:",
-    ...(IS_MOBILE ? [] : ["W = Fastball     A = Knuckleball\nS = Curveball     D = Riser"]),
-    IS_MOBILE
-      ? "Tap the power-up icon to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!"
-      : "Press Z to unleash your character's special power-up pitch. Careful, you only get ONE use per inning!",
-    "Alright, let's see what you've got. Throw pitches until you strike the batter out!",
   ], beginPitchPractice);
 }
 
@@ -2431,8 +2445,11 @@ function beginPitchPractice() {
   app.tutorial.practiceStep = 'pitch';
   app.tutorial.forceWhiffCpuBatter = true;
   app.tutorial.forceStrikeOnBall = true;
-  app.tutorial.pitchIdleTicks = 0;
-  app.tutorial.pitchHintShown = false;
+  app.tutorial.pitchIntroPhase = 'pressW';
+  app.tutorial.introTicks = 0;
+  app.tutorial.captionText = IS_MOBILE
+    ? 'First up: pitching! Tap the Fastball button below to throw your first pitch.'
+    : 'First up: pitching! Press W to throw a Fastball.';
 }
 
 // A real pitch launches like any other, then gets frozen mid-flight (see
@@ -2493,6 +2510,32 @@ function beginBattingEasy() {
   app.tutorial.battingHintShown = false;
 }
 
+// Same easy pitch as beginBattingEasy(), but this time cpuPitch() won't
+// throw it until the player has actually used their power-up (see
+// requirePowerBeforePitch's own comment) - contact here is therefore only
+// ever reachable once it's already been used, reinforcing the mechanic the
+// same way beginPitchPractice()'s guided intro does for pitching.
+function beginBattingEasyWithPower() {
+  app.tutorial.captionText = '';
+  app.homePitching = true;
+  assignActiveRoles();
+  getPitcherFrames(pitcherChar().key);
+  getBatterFrames(batterChar().key);
+  clearCounts(true);
+  resetBall();
+
+  app.tutorial.practiceStep = 'bat_easy_power';
+  app.tutorial.forcedPitch = 'EFastball';
+  app.tutorial.awaitingContact = true;
+  app.tutorial.battingMissCount = 0;
+  app.tutorial.battingHintShown = false;
+  app.tutorial.requirePowerBeforePitch = true;
+  app.tutorial.powerDrillTicks = 0;
+  app.tutorial.captionText = IS_MOBILE
+    ? 'Tap your power-up icon to use it, then swing when the pitch comes in!'
+    : 'Press M to use your power-up, then swing when the pitch comes in!';
+}
+
 function beginBattingFull() {
   clearCounts(true);
   resetBall();
@@ -2500,10 +2543,12 @@ function beginBattingFull() {
   app.tutorial.forcedPitch = null; // let the real Easy-difficulty CPU pitcher roll its own pitches
   app.tutorial.awaitingContact = false; // this at-bat's real strike/ball/hit/out outcomes all count
   // Defensively clear the pitching-drill flags rather than relying on
-  // beginBattingEasy() (earlier in the script) having already done so - a
-  // real strikeout/walk/out must be able to fire normally here.
+  // beginBattingEasy()/beginBattingEasyWithPower() (earlier in the script)
+  // having already done so - a real strikeout/walk/out must be able to fire
+  // normally here.
   app.tutorial.forceWhiffCpuBatter = false;
   app.tutorial.forceStrikeOnBall = false;
+  app.tutorial.requirePowerBeforePitch = false;
   app.tutorial.cpuShouldDemoPower = true;
 }
 
@@ -2534,8 +2579,50 @@ function stepTutorial() {
     t.revealProgress += 1 / TYPEWRITER_TICKS_PER_CHAR;
   }
 
+  // Guided pitching intro (see beginPitchPractice()): walks the player
+  // through one plain pitch, points out the pitch menu, then one power-up
+  // pitch - entirely via the non-blocking caption banner, so gameplay never
+  // pauses and every prompt can be acted on immediately. Falls through into
+  // the ordinary "throw pitches until you strike them out" tail (already
+  // below) once pitchIntroPhase goes back to null.
+  if (t.practiceStep === 'pitch' && t.pitchIntroPhase) {
+    if (t.pitchIntroPhase === 'pressW') {
+      if (app.isPitching) {
+        t.pitchIntroPhase = 'sawPitches';
+        t.introTicks = 0;
+        t.captionText = IS_MOBILE
+          ? "Nice! You've got 4 pitches total - see your pitch buttons below."
+          : "Nice! You've got 4 pitches total - see them in the bottom left.";
+      }
+    } else if (t.pitchIntroPhase === 'sawPitches') {
+      if (++t.introTicks >= 120) { // ~3s at 40 ticks/sec
+        t.pitchIntroPhase = 'pressZ';
+        t.captionText = IS_MOBILE
+          ? 'Tap your power-up icon to use your special pitch!'
+          : 'Press Z to use your power-up pitch!';
+      }
+    } else if (t.pitchIntroPhase === 'pressZ') {
+      if (!app.pitchPowerFull) { // Z was just pressed - power consumed
+        t.pitchIntroPhase = 'throwPowerPitch';
+        t.captionText = IS_MOBILE ? 'Now tap a pitch button to throw it!' : 'Now throw your pitch!';
+      }
+    } else if (t.pitchIntroPhase === 'throwPowerPitch') {
+      if (app.isPitching) {
+        t.pitchIntroPhase = 'toldOnce';
+        t.introTicks = 0;
+        t.captionText = 'Careful - power-ups like that only work ONCE per inning!';
+      }
+    } else if (t.pitchIntroPhase === 'toldOnce') {
+      if (++t.introTicks >= 120) {
+        t.pitchIntroPhase = null;
+        t.captionText = 'Now finish the job - strike them out!';
+      }
+    }
+  }
+
   if (t.pitchingStrikeoutDone) {
     t.pitchingStrikeoutDone = false;
+    t.captionText = '';
     showTutorialDialog([
       "Strikeout! Beautiful pitching, rookie!",
       "Now let's work on your batting. I'll walk you through it step by step - watch the ball!",
@@ -2578,13 +2665,20 @@ function stepTutorial() {
 
   if (t.contactMade) {
     t.contactMade = false;
-    showTutorialDialog([
-      "Nice contact! Now let's put it all together: one real at-bat against an easy-mode pitcher.",
-      IS_MOBILE
-        ? "Don't forget - tap your power-up icon for an edge if you need it!"
-        : "Don't forget - press M to use your power-up for an edge if you need it!",
-      "Good luck out there!",
-    ], beginBattingFull);
+    if (t.practiceStep === 'bat_easy') {
+      // First contact, no power-up used yet - show them it makes it even
+      // easier before moving on to a real at-bat.
+      showTutorialDialog([
+        IS_MOBILE
+          ? "Nice contact! Try that again, but tap your power-up icon first for an even easier hit."
+          : "Nice contact! Try that again, but press M to use your power-up first for an even easier hit.",
+      ], beginBattingEasyWithPower);
+    } else {
+      showTutorialDialog([
+        "Nice contact! Now let's put it all together: one real at-bat against an easy-mode pitcher.",
+        "Good luck out there!",
+      ], beginBattingFull);
+    }
     return;
   }
 
@@ -2600,22 +2694,18 @@ function stepTutorial() {
   // Everything below is a stuck-player nudge, not a real drill-progress
   // check - never open one on top of a dialogue that's already up (either
   // one just opened above, or one still being read from an earlier tick).
+  // Pitching has no nudge of its own here - the caption banner above already
+  // spells out exactly what to press, persistently, for the whole intro.
   if (t.dialogLines.length > 0) return;
 
-  // Pitching practice: any keypress is a valid pitch here (forceStrikeOnBall
-  // makes every one a Strike), so a player who's thrown nothing in a while
-  // almost certainly doesn't know which key does that, not that they're
-  // thinking it over - nudge them once, after a real pause.
-  if (t.practiceStep === 'pitch' && !t.pitchHintShown) {
-    if (app.isPitching || ball.visible || app.pitch) {
-      t.pitchHintShown = true; // they've thrown one - this nudge is no longer relevant
-    } else if (++t.pitchIdleTicks >= 400) { // ~10s at 40 ticks/sec
-      t.pitchHintShown = true;
-      showTutorialDialog([
-        IS_MOBILE
-          ? "Whenever you're ready - tap the Fastball button below to throw your first pitch!"
-          : "Whenever you're ready - press W to throw your first pitch!",
-      ], null); // no onDialogDone - just a nudge, dismissing it resumes the drill right where it was
+  // Batting power drill (bat_easy_power, see beginBattingEasyWithPower()):
+  // cpuPitch() won't throw anything at all while this is true, so a player
+  // who never presses M would otherwise wait forever with no miss for the
+  // ordinary 8-miss fallback below to even count - give up on requiring it
+  // after a real pause instead, and just let the pitch come in normally.
+  if (t.requirePowerBeforePitch) {
+    if (++t.powerDrillTicks >= 1200) { // ~30s at 40 ticks/sec
+      t.requirePowerBeforePitch = false;
     }
     return;
   }
@@ -2637,9 +2727,9 @@ function stepTutorial() {
     t.awaitingContact = false;
     t.battingMissCount = 0;
     t.battingHintShown = false;
-    // bat_easy is the only awaitingContact-gated step left (the "medium"
-    // step was removed - straight from the aim demo's easy pitch into the
-    // real at-bat), so this always leads to beginBattingFull() now.
+    // Both awaitingContact-gated steps (bat_easy and bat_easy_power) give up
+    // the same way here - a stuck player just skips straight to the real
+    // at-bat rather than staying blocked on either one forever.
     showTutorialDialog(
       ["No worries - let's keep moving. You'll get more chances in a real match!"],
       beginBattingFull
