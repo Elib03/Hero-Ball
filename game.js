@@ -148,6 +148,62 @@ function characterDifficultyIndex(key) {
   return CPU_DIFFICULTY_BY_RANK[rank] ?? 1;
 }
 
+/* ============================== CURRENCY / UPGRADES (Solo mode only) ==============================
+   A second, parallel progression track on top of the condition-based unlocks
+   above: the player earns Coins by winning solo matches (or watching a
+   rewarded ad) and spends them on permanent pitching/batting upgrades and on
+   buying locked player characters outright. All tunable - retune freely
+   after playtesting. */
+const WIN_BASE_COINS = 50;
+const WIN_COINS_PER_RUN = 5; // solo win reward = WIN_BASE_COINS + (human's own score) * this
+const AD_REWARD_COINS = 40; // flat reward per fully-watched rewarded ad
+
+const PITCH_UPGRADE_COST = [150, 300]; // cost of tier 1 (Easy->Normal) and tier 2 (Normal->Hard), same for all 4 pitch types
+// Contact/Power levels are 1-5, not 0-5 - level 1 is the free starting point
+// (nothing bought yet), so there are only 4 purchasable steps (1->2, 2->3,
+// 3->4, 4->5). Costs here line up with those 4 steps, in order.
+const BATTING_UPGRADE_COST = [90, 135, 200, 300];
+// crosshairRadius/criticalRadius scale from level 1 (free baseline, same
+// radius the game always used) up to level 5, in the same unit-space toLen()
+// takes (see baseCrosshairRadius()/baseCriticalRadius() below). Level 5
+// Contact is calibrated to match what used to be the old level-2 value
+// (toLen(14)) and level 5 Power to the old level-3 value (toLen(5)) - both
+// intentionally toned down from the previous 0-5 scale's top end, which ran
+// all the way to toLen(18.5)/toLen(6).
+const CONTACT_RADIUS_STEP = 0.75; // (14 - 11) / 4 steps
+const POWER_RADIUS_STEP = 0.375; // (5 - 3.5) / 4 steps
+// Indexed by PROGRESSION_ORDER position; index 0 (antman) is free/unbuyable.
+const PLAYER_BUY_COST_BY_RANK = [null, 200, 350, 500, 650, 800, 950, 1100, 1300, 1500];
+
+function pitchTierPrefix(baseType) {
+  const level = saveData.pitchUpgrades[baseType.toLowerCase()] || 0;
+  return level === 0 ? 'E' : level === 2 ? 'H' : '';
+}
+function baseCrosshairRadius() {
+  return app.mode === 'solo' ? toLen(11 + (saveData.battingUpgrades.contact - 1) * CONTACT_RADIUS_STEP) : toLen(11);
+}
+function baseCriticalRadius() {
+  return app.mode === 'solo' ? toLen(3.5 + (saveData.battingUpgrades.power - 1) * POWER_RADIUS_STEP) : toLen(3.5);
+}
+function characterBuyCost(key) {
+  const rank = PROGRESSION_ORDER.indexOf(key);
+  return PLAYER_BUY_COST_BY_RANK[rank] ?? null;
+}
+// Buys a locked player character outright, bypassing its unlock condition.
+// Unlike unlockCharacter()'s other callers, a purchase is announced right on
+// the card itself (the silhouette lifts immediately) rather than through the
+// post-game unlockReveal screen, so the queued app.newlyUnlocked entry is
+// popped back off right away.
+function buyPlayerCharacter(key) {
+  const cost = characterBuyCost(key);
+  if (!cost || isPlayerUnlocked(key) || saveData.coins < cost) return false;
+  saveData.coins -= cost;
+  unlockCharacter('player', key);
+  app.newlyUnlocked.pop();
+  persistSaveData();
+  return true;
+}
+
 const SAVE_KEY = 'heroBallSave';
 function defaultSaveData() {
   return {
@@ -159,7 +215,16 @@ function defaultSaveData() {
       totalStrikeouts: 0,
       winsWithCharacter: {}, // character key -> true, tracked for the 9 non-Scientist characters
     },
+    coins: 0,
+    pitchUpgrades: { fastball: 0, curveball: 0, riser: 0, knuckleball: 0 }, // each 0/1/2 (Easy/Normal/Hard)
+    battingUpgrades: { contact: 1, power: 1 }, // each 1-5 - level 1 is the free starting point, not a purchase
   };
+}
+// Clamps a saved Contact/Power level into the current 1-5 range - guards
+// against an older save's 0 (that scale used to start at 0) ending up below
+// the new minimum and producing a negative/undersized radius.
+function clampBattingUpgradeLevel(value) {
+  return Math.max(1, Math.min(5, Number(value) || 1));
 }
 // Merges saved data over a fresh set of defaults (rather than trusting the
 // saved object's shape completely) so a save from before a future stat gets
@@ -180,6 +245,12 @@ function loadSaveData() {
         everHitHomeRun: !!(saved.stats && saved.stats.everHitHomeRun),
         totalStrikeouts: (saved.stats && saved.stats.totalStrikeouts) || 0,
         winsWithCharacter: Object.assign({}, saved.stats && saved.stats.winsWithCharacter),
+      },
+      coins: Math.max(0, Number(saved.coins) || 0),
+      pitchUpgrades: Object.assign({}, fresh.pitchUpgrades, saved.pitchUpgrades),
+      battingUpgrades: {
+        contact: clampBattingUpgradeLevel(saved.battingUpgrades && saved.battingUpgrades.contact),
+        power: clampBattingUpgradeLevel(saved.battingUpgrades && saved.battingUpgrades.power),
       },
     };
   } catch (e) {
@@ -672,6 +743,30 @@ function pokiCommercialBreak(onDone) {
   });
 }
 
+// Same pattern as pokiCommercialBreak() above, but for the "watch an ad for
+// Coins" button on the Upgrades screen - a REWARDED ad, which resolves to
+// whether the player actually watched it to completion (onResult(false) if
+// they skipped early, in which case no reward should be granted). Falls back
+// to an instant "success" when the SDK (or its rewardedBreak call) isn't
+// available at all, e.g. local dev via `python -m http.server`, so testing
+// off-Poki still works.
+function pokiRewardedAd(onResult) {
+  if (!pokiSdkAvailable || typeof PokiSDK.rewardedBreak !== 'function') { onResult(true); return; }
+  pokiBreakPending = true;
+  PokiSDK.rewardedBreak(() => {
+    musicSound.pause();
+    crowdSound.pause();
+  }).then(success => {
+    pokiBreakPending = false;
+    if (musicStarted) musicSound.play().catch(() => {});
+    onResult(success);
+  });
+}
+function handleWatchAd() {
+  if (pokiBreakPending) return;
+  pokiRewardedAd(success => { if (success) { saveData.coins += AD_REWARD_COINS; persistSaveData(); } });
+}
+
 // Safety net: every in-game path that ends a match (game over, quitting,
 // opening the quit-confirm pause) already calls pokiGameplayStop() itself -
 // but a player (or an automated test) can also just close the tab, switch
@@ -709,7 +804,7 @@ const app = {
   // hurting early retention. 'mode' is still very much a real screen, just
   // never the FIRST one - reached normally once the tutorial finishes, gets
   // skipped, or a real match ends/gets quit.
-  screen: 'mode', // mode | characterSolo | characterVersus | mobileCharacterSelect | mobileCpuSelect | play | gameOver | unlockReveal
+  screen: 'mode', // mode | characterSolo | characterVersus | upgrades | mobileCharacterSelect | mobileCpuSelect | mobileUpgrades | play | gameOver | unlockReveal
   mode: null, // 'solo' | 'versus'
   modeSelectIndex: 0, // 0 = Solo, 1 = 2 Player
   difficultyIndex: 0, // default Easy - Normal was too punishing for a brand-new player's very first match
@@ -841,6 +936,8 @@ const app = {
   pitchTypesHitThisInning: { fastball: false, curveball: false, riser: false, knuckleball: false },
   newlyUnlocked: [], // [{type:'player'|'cpu', key, name}] populated by evaluateGameEndUnlocks(), shown by the unlockReveal screen
   cpuLocked: false, // mirrors player1Locked, but for the CPU character card on the solo/mobileCpuSelect screens
+  lastCoinsEarned: 0, // set by evaluateGameEndUnlocks(), shown on drawGameOver()
+  upgradeCursorIndex: 0, // selected row on the desktop Upgrades screen
 
   // Interactive tutorial (see startTutorial()/stepTutorial()/
   // drawTutorialOverlay()). Reuses the real 'play' screen and gameplay code
@@ -897,9 +994,6 @@ const app = {
     // at least once during the tutorial.
     cpuShouldDemoPower: false,
   },
-
-  fireTuneActive: false, // debug: live fire-trail alignment tuning (press F)
-  fireTuneFrame: 0, // 0 = ready stance, 1-5 = swing frames (matches batterFrameIndex numbering)
 };
 
 let homeScore = 0, awayScore = 0;
@@ -927,8 +1021,8 @@ let mouseX = -50, mouseY = -50; // raw pointer position, used as-is for menu cli
 // and useful before the mouse/joystick ever moves - matters most on mobile,
 // where the joystick doesn't touch crosshairX/Y at all until first dragged.
 let crosshairX = toX(325), crosshairY = toY(277); // smoothed aiming position used in gameplay
-let crosshairRadius = toLen(11);
-let criticalRadius = toLen(3.5);
+let crosshairRadius = baseCrosshairRadius();
+let criticalRadius = baseCriticalRadius();
 let critHidden = false;
 let crosshairStyle = 'normal'; // normal | blackout
 
@@ -1002,8 +1096,8 @@ function resetBall() {
   // runs at the end of every strike/ball/hit/out).
   if (app.smallBatActive) {
     app.smallBatActive = false;
-    crosshairRadius = toLen(11);
-    criticalRadius = toLen(3.5);
+    crosshairRadius = baseCrosshairRadius();
+    criticalRadius = baseCriticalRadius();
   }
   // Tutorial batting drills (bat_easy/bat_medium) repeat the same forced
   // pitch until the player makes contact - wiping the strike/ball dots every
@@ -1318,8 +1412,8 @@ function clearCounts(clearOuts) {
 
 function clearPowerupVisuals() {
   app.batFireVisible = false;
-  criticalRadius = toLen(3.5);
-  crosshairRadius = toLen(11);
+  criticalRadius = baseCriticalRadius();
+  crosshairRadius = baseCrosshairRadius();
   crosshairStyle = 'normal';
   critHidden = false;
   app.paused = false;
@@ -1496,9 +1590,16 @@ function switchSides() {
 // recordBaseHit()/recordStrike()). Populates app.newlyUnlocked for the
 // post-game unlockReveal screen (see goToCharacterSelectAfterGameOver()).
 function evaluateGameEndUnlocks() {
+  // Reset every call (not just inside the win branch below) so a loss never
+  // leaves a stale amount from an earlier win showing on drawGameOver().
+  app.lastCoinsEarned = 0;
   if (app.gameOverP1Wins) {
     // Only ever called for solo (see switchSides()'s call site), where p1
     // is the away team - awayScore is the human's own score here.
+    const coinsEarned = WIN_BASE_COINS + awayScore * WIN_COINS_PER_RUN;
+    saveData.coins += coinsEarned;
+    app.lastCoinsEarned = coinsEarned;
+
     if (awayScore >= 10) unlockCharacter('player', 'pyro');
     if (app.maxDeficitThisGame >= 3) unlockCharacter('player', 'gambler');
     if (!app.humanUsedPowerThisGame) unlockCharacter('player', 'shadow');
@@ -1841,7 +1942,18 @@ function cpuSwing() {
     // Single/Double/Home Run split within that contact rate keeps the
     // original ~70/20/10 proportions (see CPU_BAT_ODDS_BY_DIFFICULTY),
     // just scaled up or down together with the total hit rate.
-    const [whiffB, singleB, doubleB] = CPU_BAT_ODDS_BY_DIFFICULTY[app.difficultyIndex];
+    let [whiffB, singleB, doubleB] = CPU_BAT_ODDS_BY_DIFFICULTY[app.difficultyIndex];
+    // Solo-only: each upgrade level bought for the SPECIFIC pitch type just
+    // thrown shaves 2 percentage points off the CPU's hit rate (20/1000),
+    // pulled from the Single tier's width (singleB/doubleB stay put) since a
+    // sharper pitch should turn marginal contact into a whiff, not erase a
+    // clean double/homer that was already going to happen. Doesn't touch
+    // versus mode or any power-pitch (those take the app.powerUpActive
+    // branch above, never reach here).
+    if (app.mode === 'solo') {
+      const pitchType = basePitchType(app.pitch);
+      if (pitchType) whiffB = Math.min(singleB, whiffB + saveData.pitchUpgrades[pitchType] * 20);
+    }
     const roll = randRange(0, 1000);
     if (roll < whiffB) { /* whiff */ }
     else if (roll < singleB) { ball.xSpeed = -lenX(randRange(10, 20)); ball.ySpeed = -toLen(randRange(7, 12)); } // Single
@@ -1907,6 +2019,23 @@ window.addEventListener('keydown', e => {
   if (pokiBreakPending) return;
   ensureMusicStarted();
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
+
+  // TEMPORARY DEBUG - remove before shipping: press K on any screen to grant
+  // 10,000 coins for testing the currency/upgrade system without grinding.
+  if (key === 'k') { saveData.coins += 10000; persistSaveData(); return; }
+  // TEMPORARY DEBUG - remove before shipping: press R on any screen to reset
+  // pitching/batting upgrade levels back to their free starting point
+  // (coins/character unlocks untouched), for retesting the upgrade system
+  // without wiping the whole save.
+  if (key === 'r') {
+    saveData.pitchUpgrades = { fastball: 0, curveball: 0, riser: 0, knuckleball: 0 };
+    saveData.battingUpgrades = { contact: 1, power: 1 };
+    crosshairRadius = baseCrosshairRadius();
+    criticalRadius = baseCriticalRadius();
+    persistSaveData();
+    return;
+  }
+
   if (app.screen === 'mode') { handleModeSelectKey(key); return; }
 
   if (app.screen === 'characterSolo') {
@@ -1915,6 +2044,10 @@ window.addEventListener('keydown', e => {
   }
   if (app.screen === 'characterVersus') {
     handleVersusSelectKey(key);
+    return;
+  }
+  if (app.screen === 'upgrades') {
+    handleUpgradesKey(key);
     return;
   }
   if (app.screen === 'gameOver') {
@@ -1994,7 +2127,6 @@ function resetMatchState() {
   stopSound(POWER_SOUNDS.gamblerBatting); // safety net if a mode/match reset happens mid-roll
   stopSound(POWER_SOUNDS.gamblerPitching);
   app.mirageCount = 0;
-  app.fireTuneActive = false;
   app.batPowerFull = true;
   app.pitchPowerFull = true;
   crowdSound.pause();
@@ -2116,6 +2248,10 @@ function handleSoloSelectKey(key) {
     if (isCpuUnlocked(CHARACTERS[app.cpuBatterIndex].key)) app.cpuLocked = true;
   } else if (key === 'enter' && app.readyOpacity >= 80) {
     beginGame();
+  } else if (key === 'b') {
+    buyPlayerCharacter(CHARACTERS[app.player1Index].key);
+  } else if (key === 'u') {
+    app.screen = 'upgrades';
   }
 }
 
@@ -2168,6 +2304,17 @@ function startMatch() {
   getPitcherFrames(pitcherChar().key);
   getBatterFrames(batterChar().key);
   resetBall();
+  // Bug fix: crosshairRadius/criticalRadius are only ever recomputed from
+  // saveData.battingUpgrades inside clearPowerupVisuals()/resetBall()'s
+  // smallBatActive branch - neither of which startMatch() calls unconditionally.
+  // Buying a Contact/Power upgrade on the select screen then starting a new
+  // match left the crosshair at whatever stale radius it happened to have
+  // from before (page load, or the previous match's own upgrade levels),
+  // only catching up once an out or hit mid-game incidentally triggered one
+  // of those two functions. Recompute explicitly here so every match starts
+  // with the upgrade levels actually in effect from pitch one.
+  crosshairRadius = baseCrosshairRadius();
+  criticalRadius = baseCriticalRadius();
   // startMatch() only ever runs after the player has already interacted with
   // the menu (clicked/tapped Play, pressed Enter, etc.), so the browser's
   // autoplay-needs-a-user-gesture policy is already satisfied here.
@@ -2650,41 +2797,6 @@ function handleGameplayKey(key, repeat) {
   }
   if (key === 'escape') { openQuitConfirm(); return; }
 
-  // Fire Trail Tune Mode: a debug tool for dialing in the Fire power-up's
-  // flame alignment by eye, across all 6 batter sprites. Press F to toggle;
-  // while active, 0 previews the ready/idle stance and 1-5 the swing frames,
-  // arrow keys nudge the flame's x/y offset, and [ / ] rotate it.
-  // FIRE_TRAIL_OFFSETS is read directly by getBatFireTransform() every draw,
-  // so adjustments here take effect in real gameplay immediately - nothing
-  // needs to be copied anywhere.
-  if (key === 'f') {
-    app.fireTuneActive = !app.fireTuneActive;
-    if (app.fireTuneActive) {
-      app.batFireVisible = true;
-      app.batterFrameIndex = app.fireTuneFrame;
-      app.isBatting = app.fireTuneFrame > 0;
-    } else {
-      app.isBatting = false;
-      app.batFireVisible = false;
-      app.batterFrameIndex = 0;
-    }
-    return;
-  }
-  if (app.fireTuneActive) {
-    const off = FIRE_TRAIL_OFFSETS[app.fireTuneFrame];
-    if (key >= '0' && key <= '5') {
-      app.fireTuneFrame = Number(key);
-      app.batterFrameIndex = app.fireTuneFrame;
-      app.isBatting = app.fireTuneFrame > 0;
-    } else if (key === 'arrowleft') off.x -= 2;
-    else if (key === 'arrowright') off.x += 2;
-    else if (key === 'arrowup') off.y -= 2;
-    else if (key === 'arrowdown') off.y += 2;
-    else if (key === '[') off.rot -= 5;
-    else if (key === ']') off.rot += 5;
-    return;
-  }
-
   const humanPitching = app.activePitcherKey !== 'cpu';
   const humanBatting = app.activeBatterKey !== 'cpu';
   // Solo only ever has one human, who always uses WASD regardless of home/away.
@@ -2711,7 +2823,8 @@ function handleGameplayKey(key, repeat) {
       app.isPitching = true;
       if (app.ballSlow) { app.pitch = 'E' + base; app.ballSlow = false; }
       else if (app.ballFast) { app.pitch = 'H' + base; app.ballFast = false; }
-      else app.pitch = base;
+      else if (app.mode === 'solo') { app.pitch = pitchTierPrefix(base) + base; } // permanent per-pitch-type upgrade tier - see PITCH_UPGRADE_COST
+      else { app.pitch = base; }
     }
   }
 
@@ -2864,12 +2977,19 @@ function attemptSwing() {
 function handlePointerDown(x, y) {
   if (pokiBreakPending) return; // don't let a click/tap during an ad break reach whatever screen is underneath it
   if (app.screen === 'mode') { handleModeClick(x, y); return; }
-  if (app.screen === 'characterSolo' || app.screen === 'characterVersus') {
+  if (app.screen === 'characterSolo') {
+    if (pointInBackButton(x, y)) { goBackToModeSelect(); return; }
+    if (pointInUnitRect(x, y, UPGRADES_BUTTON)) { app.screen = 'upgrades'; return; }
+    return;
+  }
+  if (app.screen === 'characterVersus') {
     if (pointInBackButton(x, y)) goBackToModeSelect();
     return;
   }
+  if (app.screen === 'upgrades') { handleUpgradesClick(x, y); return; }
   if (app.screen === 'mobileCharacterSelect') { handleMobileCharacterSelectTap(x, y); return; }
   if (app.screen === 'mobileCpuSelect') { handleMobileCpuSelectTap(x, y); return; }
+  if (app.screen === 'mobileUpgrades') { handleMobileUpgradesTap(x, y); return; }
   if (app.screen === 'gameOver') {
     if (pointInGameOverButton(x, y)) goToCharacterSelectAfterGameOver();
     return;
@@ -3004,6 +3124,27 @@ function drawBackButton(btn) {
   rect(bx, by, bw, bh, 'rgba(0,0,0,0.5)', 1, 'white', 2);
   text('< Back', bx + bw / 2, by + bh / 2, 16, 'white', 1, 'center', 700);
 }
+
+// Generic unit-space rect hit-test/draw pair, used by the Upgrades button and
+// the new Upgrades screen's rows - same math as pointInBackButton()/
+// drawBackButton() above, just not hardcoded to the Back button's own label.
+function pointInUnitRect(x, y, btn) {
+  return x >= toX(btn.x) && x <= toX(btn.x) + lenX(btn.w)
+    && y >= toY(btn.y) && y <= toY(btn.y) + toLen(btn.h);
+}
+function drawUnitButton(btn, label, enabled) {
+  const bx = toX(btn.x), by = toY(btn.y), bw = lenX(btn.w), bh = toLen(btn.h);
+  rect(bx, by, bw, bh, enabled === false ? 'rgba(60,60,60,0.6)' : 'rgba(0,0,0,0.5)', 1, enabled === false ? '#777' : 'white', 2);
+  text(label, bx + bw / 2, by + bh / 2, 15, enabled === false ? '#999' : 'white', 1, 'center', 700);
+}
+
+// Bottom-center button on the Solo character-select screen, below the
+// existing "A/D S To Select" hint row.
+const UPGRADES_BUTTON = { x: 150, y: 368, w: 100, h: 28 };
+// Mobile: sits in the same bottom row as the nav triangles (x:20-132) and
+// Confirm/Buy (x:280-390), filling the empty gap between them (x:132-280)
+// rather than needing a whole new row (no vertical room left below y:400).
+const MOBILE_UPGRADES_BUTTON = { x: 156, y: 345, w: 100, h: 30 };
 
 // Shared bottom-left prev/next triangle buttons + bottom-right Confirm
 // button used by both mobile select screens (mobileCharacterSelect and
@@ -3161,7 +3302,7 @@ function drawLockIcon(cx, cy, size) {
 // A content-locked card still shows the name and both power-up icons as
 // normal (so it reads as a teaser, not a mystery) but silhouettes the
 // portrait art itself and overlays a lock icon + the unlock condition.
-function drawPortraitCard(cx, cy, w, h, charObj, locked, borderColor, contentLocked, conditionText) {
+function drawPortraitCard(cx, cy, w, h, charObj, locked, borderColor, contentLocked, conditionText, buyCost) {
   rect(cx - w / 2, cy - h / 2, w, h, 'rgba(255,255,255,0.08)', 1, locked ? (borderColor || 'gold') : null, locked ? 5 : 0);
   const img = portraits[charObj.key];
   if (img.complete && img.naturalWidth) {
@@ -3186,9 +3327,18 @@ function drawPortraitCard(cx, cy, w, h, charObj, locked, borderColor, contentLoc
   }
   if (contentLocked) {
     drawLockIcon(cx, cy + 6, Math.min(w, h) * 0.26);
+    // Buy line always reserves its own row at the very bottom of the card;
+    // the condition text (which can wrap to 2 lines) sits stacked above it,
+    // so the two never collide regardless of how long the condition text is.
+    const buyY = cy + h / 2 - 14;
+    if (buyCost) {
+      const affordable = saveData.coins >= buyCost;
+      text('Buy: ' + buyCost + ' coins', cx, buyY, 11, affordable ? '#7CFC00' : '#999', 1, 'center', 700);
+    }
     if (conditionText) {
       const lines = computeWrappedLines(conditionText, w - 20, 11, 700);
-      const startY = cy + h / 2 - 14 - (lines.length - 1) * 13;
+      const condBottomY = buyCost ? buyY - 15 : buyY;
+      const startY = condBottomY - (lines.length - 1) * 13;
       lines.forEach((l, i) => text(l, cx, startY + i * 13, 11, '#e8d68a', 1, 'center', 700));
     }
   }
@@ -3209,6 +3359,10 @@ function drawReadyOverlay(label) {
 // each its own screen with its own Confirm button - unlike desktop's single
 // combined drawSoloSelect() screen. Reuses drawPortraitCard() (already
 // generic) and the shared nav/confirm button helpers above.
+// Sits just above MOBILE_CONFIRM_BUTTON (y:335-385) - only shown in place of
+// Confirm while the browsed character is still locked and buyable.
+const MOBILE_BUY_BUTTON = { x: 280, y: 275, w: 110, h: 44 };
+
 function drawMobileCharacterSelect() {
   drawStadium();
   ctx.fillStyle = linearGradient(0, 0, 0, CANVAS_H, ['#8b5a2b', '#cd853f']);
@@ -3218,20 +3372,37 @@ function drawMobileCharacterSelect() {
   text('Choose Your Character', CANVAS_W / 2, toY(40), 30, 'white', 1, 'center', 900);
 
   const char = CHARACTERS[app.player1Index];
+  const locked = !isPlayerUnlocked(char.key);
+  const cost = characterBuyCost(char.key);
   drawPortraitCard(CANVAS_W / 2, toY(190), lenX(150), toLen(220), char, false, char.color,
-    !isPlayerUnlocked(char.key), playerUnlockConditionText(char.key));
+    locked, playerUnlockConditionText(char.key), cost);
 
   drawBackButton();
+  text('Coins: ' + saveData.coins, toX(390), toY(20), 16, 'gold', 1, 'right', 700);
   drawMobileNavButtons();
-  drawMobileConfirmButton('Confirm');
-  text('◀ / ▶ To Browse', CANVAS_W / 2, toY(300), 16, 'white', 0.85, 'center', 700);
+  drawUnitButton(MOBILE_UPGRADES_BUTTON, 'Upgrades');
+  if (locked && cost) {
+    drawUnitButton(MOBILE_BUY_BUTTON, 'Buy (' + cost + ')', saveData.coins >= cost);
+  } else {
+    drawMobileConfirmButton('Confirm');
+  }
+  // Pushed down from the card's own bottom edge (toY(300)) - locked cards now
+  // also show a "Buy: N coins" line under the condition text, which crowded
+  // this hint when it sat right at the card boundary.
+  text('◀ / ▶ To Browse', CANVAS_W / 2, toY(320), 16, 'white', 0.85, 'center', 700);
 }
 
 function handleMobileCharacterSelectTap(x, y) {
   if (pointInBackButton(x, y)) { goBackToModeSelect(); return; }
+  if (pointInUnitRect(x, y, MOBILE_UPGRADES_BUTTON)) { app.screen = 'mobileUpgrades'; return; }
   if (pointInMobileNavLeft(x, y)) { app.player1Index = (app.player1Index + CHARACTERS.length - 1) % CHARACTERS.length; return; }
   if (pointInMobileNavRight(x, y)) { app.player1Index = (app.player1Index + 1) % CHARACTERS.length; return; }
-  if (pointInMobileConfirm(x, y) && isPlayerUnlocked(CHARACTERS[app.player1Index].key)) {
+  const char = CHARACTERS[app.player1Index];
+  if (!isPlayerUnlocked(char.key)) {
+    if (pointInUnitRect(x, y, MOBILE_BUY_BUTTON)) buyPlayerCharacter(char.key);
+    return;
+  }
+  if (pointInMobileConfirm(x, y)) {
     app.player1Locked = true; app.screen = 'mobileCpuSelect';
   }
 }
@@ -3286,20 +3457,146 @@ function drawSoloSelect() {
   const cpu = CHARACTERS[app.cpuBatterIndex];
   text('Player', toX(100), toY(50), 30, 'white', 1, 'center', 900);
   text('Opponent', toX(300), toY(50), 30, 'white', 1, 'center', 900);
-  text('A / D  ·  S To Select', toX(100), toY(345), 15, 'white', 0.85);
+  const playerLocked = !isPlayerUnlocked(CHARACTERS[app.player1Index].key);
+  text('A / D  ·  S To Select' + (playerLocked ? '  ·  B To Buy' : ''), toX(100), toY(345), 15, 'white', 0.85);
   text('← / →  ·  Down To Select', toX(300), toY(345), 15, 'white', 0.85);
 
   const char = CHARACTERS[app.player1Index];
   drawPortraitCard(toX(100), toY(200), lenX(150), toLen(220), char, app.player1Locked, char.color,
-    !isPlayerUnlocked(char.key), playerUnlockConditionText(char.key));
+    !isPlayerUnlocked(char.key), playerUnlockConditionText(char.key), characterBuyCost(char.key));
   drawPortraitCard(toX(300), toY(200), lenX(150), toLen(220), cpu, app.cpuLocked, cpu.color,
     !isCpuUnlocked(cpu.key), cpuUnlockConditionText(cpu.key));
 
   drawBackButton();
+  text('Coins: ' + saveData.coins, CANVAS_W / 2, toY(UPGRADES_BUTTON.y - 12), 15, 'gold', 1, 'center', 700);
+  drawUnitButton(UPGRADES_BUTTON, 'Upgrades');
 
   if (app.player1Locked && app.cpuLocked) {
     if (app.readyOpacity < 80) app.readyOpacity = Math.min(80, app.readyOpacity + 5);
     drawReadyOverlay();
+  }
+}
+
+/* ============================== UPGRADES SCREEN (Solo mode only) ==============================
+   Reached from the "Upgrades" button on drawSoloSelect()/drawMobileCharacterSelect().
+   6 purchasable rows: 4 pitch types (each 0-2, Easy/Normal/Hard) then Contact/
+   Power (each 1-5, level 1 free) - see pitchTierPrefix()/baseCrosshairRadius()/
+   baseCriticalRadius() for how these levels actually affect gameplay. */
+const UPGRADE_WATCH_AD_BUTTON = { x: 150, y: 10, w: 100, h: 32 };
+const UPGRADE_ROWS = [
+  { type: 'pitch', key: 'fastball', label: 'Fastball' },
+  { type: 'pitch', key: 'curveball', label: 'Curveball' },
+  { type: 'pitch', key: 'riser', label: 'Riser' },
+  { type: 'pitch', key: 'knuckleball', label: 'Knuckleball' },
+  { type: 'batting', key: 'contact', label: 'Contact (bigger hit zone)' },
+  { type: 'batting', key: 'power', label: 'Power (bigger critical zone)' },
+];
+function upgradeRowLevel(row) {
+  return row.type === 'pitch' ? saveData.pitchUpgrades[row.key] : saveData.battingUpgrades[row.key];
+}
+function upgradeRowMaxLevel(row) {
+  return row.type === 'pitch' ? 2 : 5;
+}
+function upgradeRowCost(row) {
+  const level = upgradeRowLevel(row);
+  if (level >= upgradeRowMaxLevel(row)) return null;
+  // Pitch levels are 0-indexed (0/1/2), so level itself is the right table
+  // index. Batting levels are 1-indexed (1-5, see BATTING_UPGRADE_COST's own
+  // comment) - the cost to leave level L sits at table[L-1].
+  return row.type === 'pitch' ? PITCH_UPGRADE_COST[level] : BATTING_UPGRADE_COST[level - 1];
+}
+function upgradeRowStatusText(row) {
+  const level = upgradeRowLevel(row);
+  if (row.type === 'pitch') return DIFFICULTY_NAMES[level];
+  return level + '/5';
+}
+function buyUpgradeRow(index) {
+  const row = UPGRADE_ROWS[index];
+  const cost = upgradeRowCost(row);
+  if (!cost || saveData.coins < cost) return false;
+  saveData.coins -= cost;
+  if (row.type === 'pitch') saveData.pitchUpgrades[row.key]++;
+  else saveData.battingUpgrades[row.key]++;
+  persistSaveData();
+  return true;
+}
+const UPGRADE_ROW_START_Y = 100, UPGRADE_ROW_SPACING = 38;
+function upgradeRowButtonRect(index) {
+  return { x: 280, y: UPGRADE_ROW_START_Y + index * UPGRADE_ROW_SPACING, w: 100, h: 30 };
+}
+function drawUpgradesScreen() {
+  drawStadium();
+  ctx.fillStyle = linearGradient(0, 0, 0, CANVAS_H, ['#8b5a2b', '#cd853f']);
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  rect(0, 0, CANVAS_W, CANVAS_H, null, 1, 'black', 2);
+
+  text('Upgrades', CANVAS_W / 2, toY(68), 26, 'white', 1, 'center', 900);
+  text('Coins: ' + saveData.coins, toX(390), toY(20), 18, 'gold', 1, 'right', 700);
+  drawBackButton();
+  drawUnitButton(UPGRADE_WATCH_AD_BUTTON, 'Watch Ad (+' + AD_REWARD_COINS + ')');
+
+  UPGRADE_ROWS.forEach((row, i) => {
+    const y = UPGRADE_ROW_START_Y + i * UPGRADE_ROW_SPACING;
+    const selected = app.upgradeCursorIndex === i;
+    text(row.label, toX(20), toY(y + 15), 15, selected ? 'gold' : 'white', 1, 'left', selected ? 900 : 400);
+    text(upgradeRowStatusText(row), toX(230), toY(y + 15), 14, '#ccc', 1, 'left');
+    const btn = upgradeRowButtonRect(i);
+    const cost = upgradeRowCost(row);
+    if (cost === null) {
+      drawUnitButton(btn, 'MAX', false);
+    } else {
+      drawUnitButton(btn, 'Upgrade (' + cost + ')', saveData.coins >= cost);
+    }
+    if (selected) {
+      text('▶', toX(8), toY(y + 15), 16, 'gold', 1, 'center', 900);
+    }
+  });
+
+  text('Up / Down · Enter To Buy', CANVAS_W / 2, toY(360), 16, 'white', 0.85, 'center', 700);
+}
+function handleUpgradesKey(key) {
+  if (key === 'escape') { app.screen = 'characterSolo'; return; }
+  if (key === 'arrowup') { app.upgradeCursorIndex = (app.upgradeCursorIndex + UPGRADE_ROWS.length - 1) % UPGRADE_ROWS.length; }
+  else if (key === 'arrowdown') { app.upgradeCursorIndex = (app.upgradeCursorIndex + 1) % UPGRADE_ROWS.length; }
+  else if (key === 'enter') { buyUpgradeRow(app.upgradeCursorIndex); }
+}
+function handleUpgradesClick(x, y) {
+  if (pointInBackButton(x, y)) { app.screen = 'characterSolo'; return; }
+  if (pointInUnitRect(x, y, UPGRADE_WATCH_AD_BUTTON)) { handleWatchAd(); return; }
+  for (let i = 0; i < UPGRADE_ROWS.length; i++) {
+    if (pointInUnitRect(x, y, upgradeRowButtonRect(i))) { app.upgradeCursorIndex = i; buyUpgradeRow(i); return; }
+  }
+}
+
+// Mobile: every row is directly tappable (no cursor, matching how other
+// mobile screens use direct-tap buttons instead of desktop's keyboard
+// cursor) - same row data/layout helpers as the desktop screen above.
+function drawMobileUpgradesScreen() {
+  drawStadium();
+  ctx.fillStyle = linearGradient(0, 0, 0, CANVAS_H, ['#8b5a2b', '#cd853f']);
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  rect(0, 0, CANVAS_W, CANVAS_H, null, 1, 'black', 2);
+
+  text('Upgrades', CANVAS_W / 2, toY(68), 24, 'white', 1, 'center', 900);
+  text('Coins: ' + saveData.coins, toX(390), toY(20), 16, 'gold', 1, 'right', 700);
+  drawBackButton();
+  drawUnitButton(UPGRADE_WATCH_AD_BUTTON, 'Watch Ad (+' + AD_REWARD_COINS + ')');
+
+  UPGRADE_ROWS.forEach((row, i) => {
+    const y = UPGRADE_ROW_START_Y + i * UPGRADE_ROW_SPACING;
+    text(row.label, toX(20), toY(y + 15), 14, 'white', 1, 'left');
+    text(upgradeRowStatusText(row), toX(230), toY(y + 15), 13, '#ccc', 1, 'left');
+    const btn = upgradeRowButtonRect(i);
+    const cost = upgradeRowCost(row);
+    if (cost === null) drawUnitButton(btn, 'MAX', false);
+    else drawUnitButton(btn, 'Buy (' + cost + ')', saveData.coins >= cost);
+  });
+}
+function handleMobileUpgradesTap(x, y) {
+  if (pointInBackButton(x, y)) { app.screen = 'mobileCharacterSelect'; return; }
+  if (pointInUnitRect(x, y, UPGRADE_WATCH_AD_BUTTON)) { handleWatchAd(); return; }
+  for (let i = 0; i < UPGRADE_ROWS.length; i++) {
+    if (pointInUnitRect(x, y, upgradeRowButtonRect(i))) { buyUpgradeRow(i); return; }
   }
 }
 
@@ -3865,17 +4162,6 @@ function drawDiceGame() {
   }
 }
 
-function drawFireTuneOverlay() {
-  if (!app.fireTuneActive) return;
-  const off = FIRE_TRAIL_OFFSETS[app.fireTuneFrame];
-  const frameLabel = app.fireTuneFrame === 0 ? 'Ready Stance' : `Swing Frame ${app.fireTuneFrame}/5`;
-  const bx = toX(60), by = toY(140), bw = lenX(280), bh = toLen(75);
-  rect(bx, by, bw, bh, 'rgba(0,0,0,0.8)', 1, 'yellow', 2);
-  text(`FIRE TUNE - ${frameLabel}`, bx + bw / 2, by + toLen(18), 16, 'yellow', 1, 'center', 700);
-  text(`x:${off.x}  y:${off.y}  rot:${off.rot}`, bx + bw / 2, by + toLen(38), 16, 'white', 1, 'center', 700);
-  text('0-5 pick frame (0=ready) | arrows nudge x/y | [ ] rotate | F to exit', bx + bw / 2, by + toLen(58), 11, 'white', 0.85, 'center');
-}
-
 // A fixed-aspect overlay, independent of the field's stretched 400-unit
 // grid, so it's laid out in raw canvas pixels rather than toX/lenX/toLen -
 // pw < ph on purpose (a "vertical rectangle", taller than wide). Enter/Y and
@@ -3958,6 +4244,9 @@ function drawGameOver() {
 
   text('GAME OVER', CANVAS_W / 2, CANVAS_H / 2 - 90, 46, 'white', 1, 'center', 900);
   text(app.gameOverP1Wins ? 'P1 WINS!' : (app.mode === 'solo' ? 'CPU WINS!' : 'P2 WINS!'), CANVAS_W / 2, CANVAS_H / 2 - 30, 30, 'gold', 1, 'center', 900);
+  if (app.mode === 'solo' && app.gameOverP1Wins) {
+    text('+' + app.lastCoinsEarned + ' Coins', CANVAS_W / 2, CANVAS_H / 2 + 10, 22, 'gold', 1, 'center', 700);
+  }
 
   const { bx, by, bw, bh } = gameOverButtonRect();
   rect(bx, by, bw, bh, 'rgba(210,30,30,0.85)', 1, 'white', 2);
@@ -4018,7 +4307,6 @@ function drawGameplay() {
   drawCrosshair();
   drawSwingHint();
   drawCallBanner();
-  drawFireTuneOverlay();
   drawPauseAnim();
   if (IS_MOBILE) drawMobileControls();
   drawTutorialOverlay(); // Coach's dialogue box, dims the scene while a line is up
@@ -4132,11 +4420,25 @@ function render() {
   if (app.screen === 'mode') drawModeSelect();
   else if (app.screen === 'characterSolo') drawSoloSelect();
   else if (app.screen === 'characterVersus') drawVersusSelect();
+  else if (app.screen === 'upgrades') drawUpgradesScreen();
   else if (app.screen === 'mobileCharacterSelect') drawMobileCharacterSelect();
   else if (app.screen === 'mobileCpuSelect') drawMobileCpuSelect();
+  else if (app.screen === 'mobileUpgrades') drawMobileUpgradesScreen();
   else if (app.screen === 'play') drawGameplay();
   else if (app.screen === 'gameOver') drawGameOver();
   else if (app.screen === 'unlockReveal') drawUnlockReveal();
+  drawMenuCursor();
+}
+
+// The canvas hides the native cursor everywhere (see style.css's `cursor:
+// none`, needed so it doesn't clash with the in-game crosshair) - outside
+// actual gameplay there's no crosshair to stand in for it, so menus/gameOver/
+// unlockReveal drew with no visible pointer at all. Reuses the same
+// hand-drawn arrow drawPauseAnim() already uses for its "grabbing" cursor.
+// Mobile has no mouse to speak of, and 'play' already has its own crosshair.
+function drawMenuCursor() {
+  if (IS_MOBILE || app.screen === 'play') return;
+  drawFakeCursor(mouseX, mouseY, 1);
 }
 
 /* ============================== HIT RESOLUTION ============================== */
@@ -4784,9 +5086,7 @@ function update() {
     }
   }
 
-  // Fire Tune Mode freezes on whichever frame is selected - don't let the
-  // normal swing animation advance past it.
-  if (app.isBatting && !app.fireTuneActive) playAnimation('batter');
+  if (app.isBatting) playAnimation('batter');
 
   if (ball.xSpeed !== 0) ball.ySpeed -= ball.accel;
   app.prevBallX = ball.x;
