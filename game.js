@@ -945,7 +945,7 @@ const app = {
   // duplicating the whole game loop.
   tutorial: {
     active: false,
-    practiceStep: null, // null | 'pitch' | 'bat_aim_demo' | 'bat_easy' | 'bat_easy_power' | 'bat_full'
+    practiceStep: null, // null | 'pitch' | 'bat_aim_demo' | 'bat_easy' | 'bat_easy_power'
     dialogLines: [], // remaining lines of the current Coach dialogue; drawTutorialOverlay() shows dialogLines[0]
     onDialogDone: null, // called once the last line in dialogLines has been advanced past
     forcedPitch: null, // when set, cpuPitch() throws exactly this pitch instead of rolling one
@@ -954,7 +954,6 @@ const app = {
     awaitingContact: false, // batting practice: waiting for the player to make contact
     contactMade: false, // set by resolveHit() once contact happens during awaitingContact
     pitchingStrikeoutDone: false, // set once the scripted pitching drill's strikeout lands
-    atBatResolved: false, // set once the closing full at-bat concludes (hit/walk/out)
     // Stuck-player safety net (see stepTutorial()) - batting timing is a
     // real skill unlike pitching (any keypress is valid there), so without
     // this a player who doesn't understand the crosshair can whiff the
@@ -997,13 +996,6 @@ const app = {
     aimDemoTicks: 0, // ticks spent frozen-and-not-yet-on-target - drives the stuck-player nudge/auto-advance below
     aimDemoHintShown: false,
     captionText: '', // shown by drawTutorialOverlay() as a slim top banner while gameplay keeps running underneath
-    // The closing at-bat (bat_full) forces the CPU pitcher to use its own
-    // power-up on the very first eligible pitch (see cpuPitch()) instead of
-    // leaving it to the same random per-pitch roll a real match uses - a
-    // short tutorial at-bat might not have enough pitches left for that roll
-    // to ever fire on its own, and the player should get to see this happen
-    // at least once during the tutorial.
-    cpuShouldDemoPower: false,
   },
 };
 
@@ -1110,7 +1102,7 @@ function resetBall() {
     crosshairRadius = baseCrosshairRadius();
     criticalRadius = baseCriticalRadius();
   }
-  // Tutorial batting drills (bat_easy/bat_medium) repeat the same forced
+  // Tutorial batting drills (bat_easy/bat_easy_power) repeat the same forced
   // pitch until the player makes contact - wiping the strike/ball dots every
   // time a pitch resolves without contact means a called strike/ball can
   // never accumulate into a real strikeout/walk and end the drill early.
@@ -1456,10 +1448,6 @@ function basePitchType(pitchName) {
 }
 
 function recordBaseHit() {
-  // Tutorial's closing full at-bat (bat_full) ends on whatever the at-bat's
-  // outcome turns out to be - a hit is one of the three ways it can conclude
-  // (alongside a walk in forceWalk() and an out in recordOut()).
-  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_full') app.tutorial.atBatResolved = true;
 
   // Solo-mode progression: a "hit" here always means a real Single/Double/
   // Home Run (a Ground Out routes through recordOut() instead, never here).
@@ -1536,9 +1524,6 @@ function recordOut() {
   if (app.tutorial.active && app.tutorial.forceStrikeOnBall) { app.tutorial.pitchingStrikeoutDone = true; return; }
   showCallBanner('Out');
   playSound(SOUNDS.out);
-  // Tutorial's closing full at-bat ends on an out just as validly as a hit or
-  // walk - see the matching hook in recordBaseHit()/forceWalk().
-  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_full') app.tutorial.atBatResolved = true;
   // Every out ends that batter's plate appearance, including a Ground Out
   // reached via contact (see the ball.y >= toY(300) ground-bounce check in
   // update(), which calls recordOut() directly) - Future Sight must clear
@@ -1686,7 +1671,6 @@ function recordStrike() {
 }
 
 function forceWalk() {
-  if (app.tutorial.active && app.tutorial.practiceStep === 'bat_full') app.tutorial.atBatResolved = true;
   showCallBanner('Walk');
   // Bug fix: a walk starts a fresh plate appearance, same as any other
   // concluded at-bat - the strike count needs to reset right along with the
@@ -1976,8 +1960,7 @@ function cpuSwing() {
 function cpuPitch() {
   // Tutorial batting drills (bat_easy/bat_easy_power) script an exact pitch
   // instead of the CPU's normal random selection, so the difficulty ramps up
-  // exactly the way the drill promises. bat_full leaves forcedPitch null and
-  // falls through to the real Easy-difficulty roll below.
+  // exactly the way the drill promises.
   if (app.tutorial.active && app.tutorial.forcedPitch) {
     // bat_easy_power: withhold the pitch entirely until the player has
     // actually used their power-up (see beginBattingEasyWithPower()) -
@@ -1985,15 +1968,6 @@ function cpuPitch() {
     if (app.tutorial.requirePowerBeforePitch && app.batPowerFull) return;
     app.pitch = app.tutorial.forcedPitch;
     app.isPitching = true;
-    return;
-  }
-  // Tutorial's closing at-bat: guarantee the player actually sees the CPU
-  // pitcher use its power-up (see app.tutorial.cpuShouldDemoPower's own
-  // comment) instead of leaving it entirely to the random roll below, which
-  // might never fire in a short tutorial at-bat.
-  if (app.tutorial.active && app.tutorial.cpuShouldDemoPower && app.pitchPowerFull && !ghostBalls[0].visible) {
-    app.tutorial.cpuShouldDemoPower = false;
-    activatePitchPower();
     return;
   }
   // CPU power-up usage: functions identically to the human Z key (see
@@ -2155,13 +2129,11 @@ function resetMatchState() {
   app.tutorial.awaitingContact = false;
   app.tutorial.contactMade = false;
   app.tutorial.pitchingStrikeoutDone = false;
-  app.tutorial.atBatResolved = false;
   app.tutorial.awaitingAimFreeze = false;
   app.tutorial.aimDemoFrozen = false;
   app.tutorial.aimDemoOnTarget = false;
   app.tutorial.aimDemoSwung = false;
   app.tutorial.captionText = '';
-  app.tutorial.cpuShouldDemoPower = false;
   app.tutorial.pitchIntroPhase = null;
   app.tutorial.introTicks = 0;
   app.tutorial.requirePowerBeforePitch = false;
@@ -2536,22 +2508,6 @@ function beginBattingEasyWithPower() {
     : 'Press M to use your power-up, then swing when the pitch comes in!';
 }
 
-function beginBattingFull() {
-  clearCounts(true);
-  resetBall();
-  app.tutorial.practiceStep = 'bat_full';
-  app.tutorial.forcedPitch = null; // let the real Easy-difficulty CPU pitcher roll its own pitches
-  app.tutorial.awaitingContact = false; // this at-bat's real strike/ball/hit/out outcomes all count
-  // Defensively clear the pitching-drill flags rather than relying on
-  // beginBattingEasy()/beginBattingEasyWithPower() (earlier in the script)
-  // having already done so - a real strikeout/walk/out must be able to fire
-  // normally here.
-  app.tutorial.forceWhiffCpuBatter = false;
-  app.tutorial.forceStrikeOnBall = false;
-  app.tutorial.requirePowerBeforePitch = false;
-  app.tutorial.cpuShouldDemoPower = true;
-}
-
 function finishTutorial() {
   quitToModeSelect();
 }
@@ -2663,31 +2619,33 @@ function stepTutorial() {
     return;
   }
 
+  // Batting power drill (bat_easy_power): once the player's actually
+  // pressed M (batPowerFull just went false), swap the caption from "press
+  // M" to "now swing" instead of leaving the already-completed instruction
+  // sitting on screen. Idempotent - stays true every tick from here until
+  // contact, harmlessly re-setting the same text.
+  if (t.practiceStep === 'bat_easy_power' && t.requirePowerBeforePitch && !app.batPowerFull) {
+    t.captionText = 'Nice! Now swing when the pitch comes in!';
+  }
+
   if (t.contactMade) {
     t.contactMade = false;
     if (t.practiceStep === 'bat_easy') {
       // First contact, no power-up used yet - show them it makes it even
-      // easier before moving on to a real at-bat.
+      // easier, then try again with it.
       showTutorialDialog([
         IS_MOBILE
           ? "Nice contact! Try that again, but tap your power-up icon first for an even easier hit."
           : "Nice contact! Try that again, but press M to use your power-up first for an even easier hit.",
       ], beginBattingEasyWithPower);
     } else {
+      // Second contact (bat_easy_power, power-up used) - that's the whole
+      // batting drill, no separate full at-bat needed after this.
       showTutorialDialog([
-        "Nice contact! Now let's put it all together: one real at-bat against an easy-mode pitcher.",
-        "Good luck out there!",
-      ], beginBattingFull);
+        "Nice hitting! You've got the fundamentals down.",
+        "Now get out there and be a Hero!",
+      ], finishTutorial);
     }
-    return;
-  }
-
-  if (t.atBatResolved) {
-    t.atBatResolved = false;
-    showTutorialDialog([
-      "That's the at-bat! You've got the fundamentals down.",
-      "Now get out there and be a Hero!",
-    ], finishTutorial);
     return;
   }
 
@@ -2728,11 +2686,11 @@ function stepTutorial() {
     t.battingMissCount = 0;
     t.battingHintShown = false;
     // Both awaitingContact-gated steps (bat_easy and bat_easy_power) give up
-    // the same way here - a stuck player just skips straight to the real
-    // at-bat rather than staying blocked on either one forever.
+    // the same way here - a stuck player just wraps up the tutorial rather
+    // than staying blocked on either one forever.
     showTutorialDialog(
-      ["No worries - let's keep moving. You'll get more chances in a real match!"],
-      beginBattingFull
+      ["No worries - you'll get more chances in a real match! Now get out there and be a Hero!"],
+      finishTutorial
     );
   }
 }
@@ -4708,7 +4666,7 @@ function resolveHit() {
     // recordBaseHit() know what pitch type was actually hit, for the
     // "hit off every pitch type" unlock condition.
     app.lastPitchThrown = app.pitch;
-    // Tutorial batting drills (bat_easy/bat_medium) only care that contact
+    // Tutorial batting drills (bat_easy/bat_easy_power) only care that contact
     // happened at all, not what it turns into (single/double/ground out) -
     // see stepTutorial().
     if (app.tutorial.active && app.tutorial.awaitingContact) {
