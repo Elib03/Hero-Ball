@@ -797,14 +797,12 @@ const ctx = canvas.getContext('2d');
 
 /* ============================== GAME STATE ============================== */
 const app = {
-  // Session starts directly in the tutorial (see the bottom of this file's
-  // startTutorial() call) rather than landing on 'mode' first - a lot of
-  // players were treating Tutorial as just one more menu option to ignore
-  // and skipping straight into real matches with zero onboarding, which was
-  // hurting early retention. 'mode' is still very much a real screen, just
-  // never the FIRST one - reached normally once the tutorial finishes, gets
-  // skipped, or a real match ends/gets quit.
-  screen: 'mode', // mode | characterSolo | characterVersus | upgrades | mobileCharacterSelect | mobileCpuSelect | mobileUpgrades | play | gameOver | unlockReveal
+  // Session starts on a one-time onboarding prompt (drawOnboardingPrompt()),
+  // not directly on 'mode' - asks whether the player already knows the
+  // controls (-> straight to the normal main menu) or wants the tutorial
+  // first (-> startTutorial()), instead of assuming either way.
+  screen: 'onboarding', // onboarding | mode | characterSolo | characterVersus | upgrades | mobileCharacterSelect | mobileCpuSelect | mobileUpgrades | play | gameOver | unlockReveal
+  onboardingIndex: 0, // 0 = "Show Me The Tutorial", 1 = "I Know The Controls"
   mode: null, // 'solo' | 'versus'
   modeSelectIndex: 0, // 0 = Solo, 1 = 2 Player
   difficultyIndex: 0, // default Easy - Normal was too punishing for a brand-new player's very first match
@@ -2020,6 +2018,7 @@ window.addEventListener('keydown', e => {
   ensureMusicStarted();
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
 
+  if (app.screen === 'onboarding') { handleOnboardingKey(key); return; }
   if (app.screen === 'mode') { handleModeSelectKey(key); return; }
 
   if (app.screen === 'characterSolo') {
@@ -2064,6 +2063,18 @@ function randomizeCharacterCursor(mode) {
   app.player1Index = mode === 'solo' ? antmanIndex : randRange(0, CHARACTERS.length);
   if (mode === 'solo') app.cpuBatterIndex = antmanIndex;
   if (mode === 'versus') app.player2Index = randRange(0, CHARACTERS.length);
+}
+
+// The very first screen a session sees (see app.screen's own comment) -
+// asks whether the player already knows the controls before they've even
+// reached the main menu, rather than assuming either way.
+function handleOnboardingKey(key) {
+  if (key === 'arrowup' || key === 'arrowdown' || key === 'w' || key === 's') {
+    app.onboardingIndex = app.onboardingIndex === 0 ? 1 : 0;
+  } else if (key === 'enter') {
+    if (app.onboardingIndex === 0) startTutorial();
+    else app.screen = 'mode';
+  }
 }
 
 function handleModeSelectKey(key) {
@@ -2960,6 +2971,7 @@ function attemptSwing() {
 // dispatch through the exact same logic.
 function handlePointerDown(x, y) {
   if (pokiBreakPending) return; // don't let a click/tap during an ad break reach whatever screen is underneath it
+  if (app.screen === 'onboarding') { handleOnboardingClick(x, y); return; }
   if (app.screen === 'mode') { handleModeClick(x, y); return; }
   if (app.screen === 'characterSolo') {
     if (pointInBackButton(x, y)) { goBackToModeSelect(); return; }
@@ -3209,6 +3221,51 @@ function drawSkipTutorialButton() {
   const { bx, by, bw, bh } = skipTutorialButtonRect();
   rect(bx, by, bw, bh, 'rgba(0,0,0,0.5)', 1, 'white', 2);
   text('Skip Tutorial', bx + bw / 2, by + bh / 2, SKIP_TUTORIAL_TEXT_SIZE, 'white', 1, 'center', 700);
+}
+
+// Sized wider than the mode-select buttons below (200 vs 150) to comfortably
+// fit "Show Me The Tutorial"/"I Know The Controls" without wrapping.
+const ONBOARDING_TUTORIAL_BTN = { x: 100, y: 95, w: 200, h: 70 };
+const ONBOARDING_SKIP_BTN = { x: 100, y: 190, w: 200, h: 70 };
+function pointInOnboardingTutorialBtn(x, y) { return pointInUnitRect(x, y, ONBOARDING_TUTORIAL_BTN); }
+function pointInOnboardingSkipBtn(x, y) { return pointInUnitRect(x, y, ONBOARDING_SKIP_BTN); }
+
+// The very first screen a session sees (app.screen defaults to 'onboarding')
+// - asks whether the player already knows the controls before assuming
+// either way, rather than forcing everyone through the tutorial or silently
+// skipping it. Reuses the same background/showcase/logo as drawModeSelect()
+// for visual consistency between the two screens.
+function drawOnboardingPrompt() {
+  drawMenuBackground();
+  drawMenuParticles();
+  drawCharacterShowcase();
+  drawTitleLogo();
+
+  text('New to Hero Ball?', CANVAS_W / 2, toY(70), 24, 'white', 1, 'center', 900);
+
+  if (IS_MOBILE) {
+    rect(toX(ONBOARDING_TUTORIAL_BTN.x), toY(ONBOARDING_TUTORIAL_BTN.y), lenX(ONBOARDING_TUTORIAL_BTN.w), toLen(ONBOARDING_TUTORIAL_BTN.h), 'gold', 1, 'white', 5);
+    text('Show Me The Tutorial', CANVAS_W / 2, toY(ONBOARDING_TUTORIAL_BTN.y + ONBOARDING_TUTORIAL_BTN.h / 2), 20, '#222', 1, 'center', 900);
+    rect(toX(ONBOARDING_SKIP_BTN.x), toY(ONBOARDING_SKIP_BTN.y), lenX(ONBOARDING_SKIP_BTN.w), toLen(ONBOARDING_SKIP_BTN.h), 'gold', 1, 'white', 5);
+    text('I Know The Controls', CANVAS_W / 2, toY(ONBOARDING_SKIP_BTN.y + ONBOARDING_SKIP_BTN.h / 2), 20, '#222', 1, 'center', 900);
+    return;
+  }
+
+  rect(toX(ONBOARDING_TUTORIAL_BTN.x), toY(ONBOARDING_TUTORIAL_BTN.y), lenX(ONBOARDING_TUTORIAL_BTN.w), toLen(ONBOARDING_TUTORIAL_BTN.h), 'gold', 1,
+    app.onboardingIndex === 0 ? 'white' : null, 5);
+  text('Show Me The Tutorial', CANVAS_W / 2, toY(ONBOARDING_TUTORIAL_BTN.y + ONBOARDING_TUTORIAL_BTN.h / 2), 22, '#222', 1, 'center', 900);
+
+  rect(toX(ONBOARDING_SKIP_BTN.x), toY(ONBOARDING_SKIP_BTN.y), lenX(ONBOARDING_SKIP_BTN.w), toLen(ONBOARDING_SKIP_BTN.h), 'gold', 1,
+    app.onboardingIndex === 1 ? 'white' : null, 5);
+  text('I Know The Controls', CANVAS_W / 2, toY(ONBOARDING_SKIP_BTN.y + ONBOARDING_SKIP_BTN.h / 2), 22, '#222', 1, 'center', 900);
+
+  const cursorY = app.onboardingIndex === 0 ? ONBOARDING_TUTORIAL_BTN.y + ONBOARDING_TUTORIAL_BTN.h / 2 : ONBOARDING_SKIP_BTN.y + ONBOARDING_SKIP_BTN.h / 2;
+  text('▶', toX(ONBOARDING_TUTORIAL_BTN.x - 10), toY(cursorY), 30, 'white', 1, 'right', 900);
+  text('Up / Down · Enter To Select', CANVAS_W / 2, toY(295), 16, 'white', 0.85, 'center', 700);
+}
+function handleOnboardingClick(x, y) {
+  if (pointInOnboardingTutorialBtn(x, y)) { startTutorial(); return; }
+  if (pointInOnboardingSkipBtn(x, y)) { app.screen = 'mode'; return; }
 }
 
 /* ============================== MENU DRAWING ============================== */
@@ -4401,7 +4458,8 @@ function drawPauseAnim() {
 function render() {
   musicSound.volume = app.screen === 'play' ? MUSIC_GAME_VOLUME : MUSIC_MENU_VOLUME;
   ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
-  if (app.screen === 'mode') drawModeSelect();
+  if (app.screen === 'onboarding') drawOnboardingPrompt();
+  else if (app.screen === 'mode') drawModeSelect();
   else if (app.screen === 'characterSolo') drawSoloSelect();
   else if (app.screen === 'characterVersus') drawVersusSelect();
   else if (app.screen === 'upgrades') drawUpgradesScreen();
@@ -5349,9 +5407,6 @@ function frame(ts) {
   requestAnimationFrame(frame);
 }
 
-// Bug fix (requested): the tutorial used to launch automatically on every
-// page load, with no menu screen first - the user wants it optional instead,
-// so the game now just opens on the normal main menu (app.screen already
-// defaults to 'mode') and the player picks Tutorial from there like any
-// other mode, same as it already works for a relaunch from the menu.
+// app.screen defaults to 'onboarding' (see the app object) - the very first
+// thing a page load shows is drawOnboardingPrompt(), not the main menu.
 requestAnimationFrame(frame);
