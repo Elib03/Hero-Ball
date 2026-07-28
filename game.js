@@ -2784,7 +2784,13 @@ function drawTutorialCaption() {
   const panelY = 235;
   const wrapped = computeWrappedLines(t.captionText, panelW - 40, size, weight);
   const lineHeight = toLen(size) * 1.3;
-  const panelH = 34 + wrapped.length * lineHeight;
+  // Bug fix: the last line sits at panelY + 20 + wrapped.length*lineHeight
+  // (text() centers vertically on that y), but at size 18 the font itself
+  // renders ~toLen(18)=32px tall - the old 34px bottom margin left only 14px
+  // below that line's own center, less than half its rendered height, so the
+  // text was actually clipping past the box's bottom edge instead of sitting
+  // inside it with room to spare.
+  const panelH = 50 + wrapped.length * lineHeight;
   rect(panelX, panelY, panelW, panelH, 'rgba(20,20,26,0.92)', 1, 'gold', 3);
   text('COACH', panelX + 20, panelY + 20, 13, 'gold', 1, 'left', 900);
   wrapped.forEach((line, i) => text(line, panelX + 20, panelY + 20 + (i + 1) * lineHeight, size, 'white', 1, 'left', weight));
