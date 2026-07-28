@@ -3225,43 +3225,44 @@ function drawSkipTutorialButton() {
 
 // Sized wider than the mode-select buttons below (200 vs 150) to comfortably
 // fit "Show Me The Tutorial"/"I Know The Controls" without wrapping.
-const ONBOARDING_TUTORIAL_BTN = { x: 100, y: 95, w: 200, h: 70 };
-const ONBOARDING_SKIP_BTN = { x: 100, y: 190, w: 200, h: 70 };
+const ONBOARDING_TUTORIAL_BTN = { x: 100, y: 150, w: 200, h: 70 };
+const ONBOARDING_SKIP_BTN = { x: 100, y: 245, w: 200, h: 70 };
 function pointInOnboardingTutorialBtn(x, y) { return pointInUnitRect(x, y, ONBOARDING_TUTORIAL_BTN); }
 function pointInOnboardingSkipBtn(x, y) { return pointInUnitRect(x, y, ONBOARDING_SKIP_BTN); }
+function drawOnboardingChoice(btn, label, selected) {
+  rect(toX(btn.x), toY(btn.y), lenX(btn.w), toLen(btn.h), 'rgba(20,20,26,0.9)', 1, selected ? 'gold' : 'white', selected ? 3 : 2);
+  text(label, toX(btn.x + btn.w / 2), toY(btn.y + btn.h / 2), 20, 'white', 1, 'center', 900);
+}
 
 // The very first screen a session sees (app.screen defaults to 'onboarding')
 // - asks whether the player already knows the controls before assuming
 // either way, rather than forcing everyone through the tutorial or silently
 // skipping it. Reuses the same background/showcase/logo as drawModeSelect()
-// for visual consistency between the two screens.
+// underneath, then dims the whole thing with a black overlay and draws the
+// prompt as a crisp modal on top - same technique drawQuitConfirm() uses -
+// rather than more yellow menu-style buttons sitting directly on the scene.
 function drawOnboardingPrompt() {
   drawMenuBackground();
   drawMenuParticles();
   drawCharacterShowcase();
   drawTitleLogo();
 
-  text('New to Hero Ball?', CANVAS_W / 2, toY(70), 24, 'white', 1, 'center', 900);
+  rect(0, 0, CANVAS_W, CANVAS_H, 'black', 0.75);
+
+  text('New to Hero Ball?', CANVAS_W / 2, toY(110), 30, 'white', 1, 'center', 900);
 
   if (IS_MOBILE) {
-    rect(toX(ONBOARDING_TUTORIAL_BTN.x), toY(ONBOARDING_TUTORIAL_BTN.y), lenX(ONBOARDING_TUTORIAL_BTN.w), toLen(ONBOARDING_TUTORIAL_BTN.h), 'gold', 1, 'white', 5);
-    text('Show Me The Tutorial', CANVAS_W / 2, toY(ONBOARDING_TUTORIAL_BTN.y + ONBOARDING_TUTORIAL_BTN.h / 2), 20, '#222', 1, 'center', 900);
-    rect(toX(ONBOARDING_SKIP_BTN.x), toY(ONBOARDING_SKIP_BTN.y), lenX(ONBOARDING_SKIP_BTN.w), toLen(ONBOARDING_SKIP_BTN.h), 'gold', 1, 'white', 5);
-    text('I Know The Controls', CANVAS_W / 2, toY(ONBOARDING_SKIP_BTN.y + ONBOARDING_SKIP_BTN.h / 2), 20, '#222', 1, 'center', 900);
+    drawOnboardingChoice(ONBOARDING_TUTORIAL_BTN, 'Show Me The Tutorial', false);
+    drawOnboardingChoice(ONBOARDING_SKIP_BTN, 'I Know The Controls', false);
     return;
   }
 
-  rect(toX(ONBOARDING_TUTORIAL_BTN.x), toY(ONBOARDING_TUTORIAL_BTN.y), lenX(ONBOARDING_TUTORIAL_BTN.w), toLen(ONBOARDING_TUTORIAL_BTN.h), 'gold', 1,
-    app.onboardingIndex === 0 ? 'white' : null, 5);
-  text('Show Me The Tutorial', CANVAS_W / 2, toY(ONBOARDING_TUTORIAL_BTN.y + ONBOARDING_TUTORIAL_BTN.h / 2), 22, '#222', 1, 'center', 900);
-
-  rect(toX(ONBOARDING_SKIP_BTN.x), toY(ONBOARDING_SKIP_BTN.y), lenX(ONBOARDING_SKIP_BTN.w), toLen(ONBOARDING_SKIP_BTN.h), 'gold', 1,
-    app.onboardingIndex === 1 ? 'white' : null, 5);
-  text('I Know The Controls', CANVAS_W / 2, toY(ONBOARDING_SKIP_BTN.y + ONBOARDING_SKIP_BTN.h / 2), 22, '#222', 1, 'center', 900);
+  drawOnboardingChoice(ONBOARDING_TUTORIAL_BTN, 'Show Me The Tutorial', app.onboardingIndex === 0);
+  drawOnboardingChoice(ONBOARDING_SKIP_BTN, 'I Know The Controls', app.onboardingIndex === 1);
 
   const cursorY = app.onboardingIndex === 0 ? ONBOARDING_TUTORIAL_BTN.y + ONBOARDING_TUTORIAL_BTN.h / 2 : ONBOARDING_SKIP_BTN.y + ONBOARDING_SKIP_BTN.h / 2;
   text('▶', toX(ONBOARDING_TUTORIAL_BTN.x - 10), toY(cursorY), 30, 'white', 1, 'right', 900);
-  text('Up / Down · Enter To Select', CANVAS_W / 2, toY(295), 16, 'white', 0.85, 'center', 700);
+  text('Up / Down · Enter To Select', CANVAS_W / 2, toY(345), 16, 'white', 0.85, 'center', 700);
 }
 function handleOnboardingClick(x, y) {
   if (pointInOnboardingTutorialBtn(x, y)) { startTutorial(); return; }
