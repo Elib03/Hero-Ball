@@ -967,7 +967,8 @@ const app = {
     // falling through into the ordinary "throw pitches until you strike them
     // out" tail that was already there.
     pitchIntroPhase: null, // null | 'pressW' | 'sawPitches' | 'pressZ' | 'throwPowerPitch' | 'toldOnce'
-    introTicks: 0, // drives the timed auto-advance for pitchIntroPhase's two purely-informational beats
+    introTicks: 0, // drives the timed auto-advance for pitchIntroPhase's two purely-informational beats, and the final "finish the job" caption's auto-clear
+    pitchIntroWaitingForResolve: false, // true from the moment a guided pitch launches until it fully resolves (forceStrikeOnBall guarantees that's a Strike) - the "4 pitches"/"once per inning" captions only appear once the preceding pitch has actually landed, not the instant it's thrown
     // Batting power drill (bat_easy_power, see beginBattingEasyWithPower()):
     // cpuPitch() won't actually throw the forced pitch while this is true,
     // so the player must use their power-up BEFORE any pitch arrives - contact
@@ -2136,6 +2137,7 @@ function resetMatchState() {
   app.tutorial.captionText = '';
   app.tutorial.pitchIntroPhase = null;
   app.tutorial.introTicks = 0;
+  app.tutorial.pitchIntroWaitingForResolve = false;
   app.tutorial.requirePowerBeforePitch = false;
   app.tutorial.powerDrillTicks = 0;
 
@@ -2419,6 +2421,7 @@ function beginPitchPractice() {
   app.tutorial.forceStrikeOnBall = true;
   app.tutorial.pitchIntroPhase = 'pressW';
   app.tutorial.introTicks = 0;
+  app.tutorial.pitchIntroWaitingForResolve = false;
   app.tutorial.captionText = IS_MOBILE
     ? 'First up: pitching! Tap the Fastball button below to throw your first pitch.'
     : 'First up: pitching! Press W to throw a Fastball.';
@@ -2543,7 +2546,14 @@ function stepTutorial() {
   // below) once pitchIntroPhase goes back to null.
   if (t.practiceStep === 'pitch' && t.pitchIntroPhase) {
     if (t.pitchIntroPhase === 'pressW') {
+      // Wait for the pitch to actually land (forceStrikeOnBall guarantees
+      // that's a Strike), not just for it to launch - the "4 pitches" caption
+      // should appear once they've actually seen the strike called, not the
+      // instant the ball leaves their hand.
       if (app.isPitching) {
+        t.pitchIntroWaitingForResolve = true;
+      } else if (t.pitchIntroWaitingForResolve) {
+        t.pitchIntroWaitingForResolve = false;
         t.pitchIntroPhase = 'sawPitches';
         t.introTicks = 0;
         t.captionText = IS_MOBILE
@@ -2551,7 +2561,7 @@ function stepTutorial() {
           : "Nice! You've got 4 pitches total - see them in the bottom left.";
       }
     } else if (t.pitchIntroPhase === 'sawPitches') {
-      if (++t.introTicks >= 120) { // ~3s at 40 ticks/sec
+      if (++t.introTicks >= 60) { // ~1.5s at 40 ticks/sec
         t.pitchIntroPhase = 'pressZ';
         t.captionText = IS_MOBILE
           ? 'Tap your power-up icon to use your special pitch!'
@@ -2564,6 +2574,9 @@ function stepTutorial() {
       }
     } else if (t.pitchIntroPhase === 'throwPowerPitch') {
       if (app.isPitching) {
+        t.pitchIntroWaitingForResolve = true;
+      } else if (t.pitchIntroWaitingForResolve) {
+        t.pitchIntroWaitingForResolve = false;
         t.pitchIntroPhase = 'toldOnce';
         t.introTicks = 0;
         t.captionText = 'Careful - power-ups like that only work ONCE per inning!';
@@ -2571,8 +2584,16 @@ function stepTutorial() {
     } else if (t.pitchIntroPhase === 'toldOnce') {
       if (++t.introTicks >= 120) {
         t.pitchIntroPhase = null;
+        t.introTicks = 0;
         t.captionText = 'Now finish the job - strike them out!';
       }
+    }
+  }
+  // Clear the final "finish the job" nudge after a few seconds instead of
+  // leaving it up indefinitely through however many more pitches it takes.
+  if (t.practiceStep === 'pitch' && !t.pitchIntroPhase && t.captionText) {
+    if (++t.introTicks >= 150) { // ~3.75s
+      t.captionText = '';
     }
   }
 
