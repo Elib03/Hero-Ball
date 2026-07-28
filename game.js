@@ -2020,22 +2020,6 @@ window.addEventListener('keydown', e => {
   ensureMusicStarted();
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
 
-  // TEMPORARY DEBUG - remove before shipping: press K on any screen to grant
-  // 10,000 coins for testing the currency/upgrade system without grinding.
-  if (key === 'k') { saveData.coins += 10000; persistSaveData(); return; }
-  // TEMPORARY DEBUG - remove before shipping: press R on any screen to reset
-  // pitching/batting upgrade levels back to their free starting point
-  // (coins/character unlocks untouched), for retesting the upgrade system
-  // without wiping the whole save.
-  if (key === 'r') {
-    saveData.pitchUpgrades = { fastball: 0, curveball: 0, riser: 0, knuckleball: 0 };
-    saveData.battingUpgrades = { contact: 1, power: 1 };
-    crosshairRadius = baseCrosshairRadius();
-    criticalRadius = baseCriticalRadius();
-    persistSaveData();
-    return;
-  }
-
   if (app.screen === 'mode') { handleModeSelectKey(key); return; }
 
   if (app.screen === 'characterSolo') {
