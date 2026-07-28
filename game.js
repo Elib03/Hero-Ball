@@ -2796,9 +2796,69 @@ function drawTutorialCaption() {
   wrapped.forEach((line, i) => text(line, panelX + 20, panelY + 20 + (i + 1) * lineHeight, size, 'white', 1, 'left', weight));
 }
 
+// Points at whichever on-screen control the current tutorial step wants the
+// player to use next, alongside the coach's caption explaining why - a
+// bouncing arrow above the actual button, not just words. Desktop targets
+// are the same key-hint boxes drawPitchMenu()/drawPowerUpUi() already draw;
+// mobile targets are drawMobileControls()'s own buttons. Steps with no fixed
+// on-screen control on desktop (aiming/swinging - mouse-driven, no dedicated
+// button there) return null on desktop but still point at the equivalent
+// mobile button.
+function tutorialArrowTarget() {
+  const t = app.tutorial;
+  if (!t.active) return null;
+  if (t.practiceStep === 'pitch') {
+    if (t.pitchIntroPhase === 'pressW') {
+      return IS_MOBILE
+        ? { x: toX(PITCH_BUTTONS[0].x) + lenX(PITCH_BUTTON_SIZE.w) / 2, y: toY(PITCH_BUTTON_SIZE.y) + toLen(PITCH_BUTTON_SIZE.h) / 2 }
+        : { x: toX(10) + toLen(10), y: toY(310) + toLen(10) }; // drawPitchMenu()'s W/Fastball row - toLen(10) is half its toLen(20) box
+    }
+    if (t.pitchIntroPhase === 'pressZ') {
+      return IS_MOBILE
+        ? { x: toX(POWERUP_BUTTON_PITCHING.x) + toLen(POWERUP_BUTTON_PITCHING.size) / 2, y: toY(POWERUP_BUTTON_PITCHING.y) + toLen(POWERUP_BUTTON_PITCHING.size) / 2 }
+        : { x: toX(10) + toLen(12), y: toY(105) + toLen(12) }; // drawPowerUpUi()'s Z box - toLen(12) is half its toLen(24) box
+    }
+    return null;
+  }
+  if (t.practiceStep === 'bat_aim_demo') {
+    if (!IS_MOBILE) return null; // desktop aims/swings with the mouse directly - no fixed button to point at
+    if (t.aimDemoFrozen && !t.aimDemoOnTarget) {
+      return { x: toX(JOYSTICK_BASE.x), y: toY(JOYSTICK_BASE.y) };
+    }
+    if (t.aimDemoFrozen && t.aimDemoOnTarget) {
+      return { x: toX(SWING_BUTTON.x) + toLen(SWING_BUTTON.size) / 2, y: toY(SWING_BUTTON.y) + toLen(SWING_BUTTON.size) / 2 };
+    }
+    return null;
+  }
+  if (t.practiceStep === 'bat_easy_power' && t.requirePowerBeforePitch && app.batPowerFull) {
+    return IS_MOBILE
+      ? { x: toX(POWERUP_BUTTON.x) + toLen(POWERUP_BUTTON.size) / 2, y: toY(POWERUP_BUTTON.y) + toLen(POWERUP_BUTTON.size) / 2 }
+      : { x: toX(260) + toLen(12), y: toY(105) + toLen(12) }; // drawPowerUpUi()'s M box
+  }
+  return null;
+}
+function drawTutorialArrow(x, y) {
+  const bounce = Math.sin(Date.now() / 200) * toLen(4); // gentle idle bounce, same Date.now()-driven style as the menu's decorative animations
+  ctx.save();
+  ctx.translate(x, y - toLen(30) + bounce);
+  ctx.fillStyle = 'gold';
+  ctx.strokeStyle = 'black';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, toLen(15));
+  ctx.lineTo(-toLen(9), -toLen(4));
+  ctx.lineTo(toLen(9), -toLen(4));
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawTutorialOverlay() {
   const t = app.tutorial;
   drawTutorialCaption();
+  const arrowTarget = tutorialArrowTarget();
+  if (arrowTarget) drawTutorialArrow(arrowTarget.x, arrowTarget.y);
   if (!t.active || t.dialogLines.length === 0) return;
 
   rect(0, 0, CANVAS_W, CANVAS_H, 'black', 0.55);
@@ -3083,6 +3143,15 @@ function handlePointerDown(x, y) {
   // behavior in handleGameplayKey().
   if (app.tutorial.active && app.tutorial.dialogLines.length > 0) { advanceTutorialDialog(); return; }
   if (IS_MOBILE) { handleMobilePlayTap(x, y); return; }
+  // Solo mode (requested): clicking a pitch-menu row (drawPitchMenu()'s W/A/S/D
+  // key-hint boxes) throws that pitch, same as pressing the actual key -
+  // not just a visual legend anymore. Versus mode keeps keyboard-only pitching.
+  if (app.mode === 'solo' && app.activePitcherKey !== 'cpu') {
+    const keys = ['w', 'a', 's', 'd'];
+    for (let i = 0; i < 4; i++) {
+      if (pointInPitchMenuRow(i, x, y)) { handleGameplayKey(keys[i]); return; }
+    }
+  }
   if (app.activeBatterKey === 'cpu') return;
   if (x > toX(250)) attemptSwing();
 }
@@ -3809,6 +3878,16 @@ function drawScoreboard() {
   for (let i = 0; i < 4; i++) circle(toX(i < 3 ? slotX[i] : 380), toY(67.5), toLen(8), ballFills[i], 1, '#777', 1);
 }
 
+// Click target for a drawPitchMenu() row (requested - solo mode only, see
+// handlePointerDown()): generous enough to cover the key box plus its label,
+// not just the small key square itself. Row layout (boxX/y spacing) must
+// match drawPitchMenu()'s own math below exactly.
+const PITCH_MENU_ROW_W = 130;
+function pointInPitchMenuRow(index, x, y) {
+  const boxSize = toLen(20);
+  const boxX = toX(10), boxY = toY(310 + index * 20);
+  return x >= boxX && x <= boxX + lenX(PITCH_MENU_ROW_W) && y >= boxY && y <= boxY + boxSize;
+}
 function drawPitchMenu() {
   // Solo mode has the human as exactly one of pitcher/batter at a time (the
   // other is CPU) - the WASD/arrow pitch-key legend is only relevant while
