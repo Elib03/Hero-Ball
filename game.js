@@ -90,6 +90,63 @@ const CHARACTERS = [
     pitch: { key: 'droneBall', label: 'Drone Ball', icon: ICONS + 'drone_ball.png' } },
 ];
 
+// Solo mode opponent dialogue (requested) - shown via showDialog() with the
+// character's own portrait/name in place of Coach's. intro fires at match
+// start, win/lose fires right after the 3rd out of the final inning (see
+// startMatch()/switchSides()).
+const OPPONENT_LINES = {
+  pyro: {
+    intro: "Hope you brought a fire extinguisher, because you're about to get torched.",
+    win: 'Told you. Ashes to ashes.',
+    lose: "Impossible... I burn everything I touch!",
+  },
+  trickster: {
+    intro: "Nothing you see out here is real. Not even this smile.",
+    win: 'Boo. You never even saw it coming.',
+    lose: 'Ah, clever... you saw through the trick. Fine, take it.',
+  },
+  scientist: {
+    intro: "I've calculated this outcome eleven different ways. You lose in all of them.",
+    win: 'As predicted. The math never lies.',
+    lose: "That's... not in any of my models. Recalculating.",
+  },
+  shadow: {
+    intro: "By the time you realize you can't see, it'll already be over.",
+    win: 'Darkness wins. It always does.',
+    lose: "Even I didn't see that one coming.",
+  },
+  gambler: {
+    intro: "Life's a gamble, kid. Let's see what you're really made of.",
+    win: 'House always wins, baby!',
+    lose: 'Ha! Snake eyes. Can\'t complain — I knew the risk.',
+  },
+  strategist: {
+    intro: 'I already know your next three moves. Try to surprise me.',
+    win: 'Exactly as planned. You were never in control.',
+    lose: '...Interesting. You broke the pattern. Noted for next time.',
+  },
+  antman: {
+    intro: "Big or small, doesn't matter — you're outmatched either way.",
+    win: 'Guess size does matter after all.',
+    lose: 'Shrinking my ego right along with the ball... nice hit.',
+  },
+  iceman: {
+    intro: "Get comfortable. You're about to be frozen solid.",
+    win: 'Cold enough for you? Game over.',
+    lose: "Huh. Guess I'm not as cool as I thought.",
+  },
+  oracle: {
+    intro: "I've already seen how this ends. Don't bother trying to change it.",
+    win: 'Foreseen. As always.',
+    lose: "Strange... the future isn't always written after all.",
+  },
+  bruiser: {
+    intro: 'Step up to the plate, kid! My fastballs don\'t just clear the fence, they leave a crater!',
+    win: 'That\'s what raw power does.',
+    lose: "Tch. Didn't think you had that kind of strength in you. Respect.",
+  },
+};
+
 /* ============================== PROGRESSION / UNLOCKS (Solo mode only) ==============================
    Solo mode gates both rosters behind progress instead of leaving every
    character freely selectable: the player unlocks characters by completing
@@ -1595,8 +1652,24 @@ function switchSides() {
         // comment), so which score means "p1 won" flips by mode.
         app.gameOverP1Wins = app.mode === 'solo' ? awayScore > homeScore : homeScore > awayScore;
         if (app.mode === 'solo') evaluateGameEndUnlocks();
-        app.screen = 'gameOver';
         pokiGameplayStop();
+        // Opponent win/lose line (requested) - fires right here, right after
+        // the 3rd out of the final inning, rather than after the player
+        // later leaves the gameOver screen. The screen stays 'play' (field
+        // still visible underneath, same as the tutorial's own dialogue)
+        // until the line is dismissed - that dismissal is what actually
+        // advances to gameOver.
+        const opp = app.mode === 'solo' ? CHARACTERS[app.cpuBatterIndex] : null;
+        const oppLines = opp ? OPPONENT_LINES[opp.key] : null;
+        if (oppLines) {
+          // These are the OPPONENT's own lines - if the human (p1) won, the
+          // opponent lost, so gameOverP1Wins=true selects their 'lose' line.
+          showDialog(opp.name, portraits[opp.key], [oppLines[app.gameOverP1Wins ? 'lose' : 'win']], () => {
+            app.screen = 'gameOver';
+          });
+        } else {
+          app.screen = 'gameOver';
+        }
       }
     }
   }
@@ -2318,7 +2391,15 @@ function startMatch() {
   // is already set by then) rather than randomized - difficulty is derived from
   // that choice's rank instead of being a separate manual picker (see
   // characterDifficultyIndex()/PROGRESSION_ORDER).
-  if (app.mode === 'solo') app.difficultyIndex = characterDifficultyIndex(CHARACTERS[app.cpuBatterIndex].key);
+  if (app.mode === 'solo') {
+    app.difficultyIndex = characterDifficultyIndex(CHARACTERS[app.cpuBatterIndex].key);
+    // Opponent intro line (requested) - fires once the CPU character for
+    // this match is locked in, using the same speaker-agnostic dialogue box
+    // as the tutorial's Coach (see app.dialog).
+    const opp = CHARACTERS[app.cpuBatterIndex];
+    const oppLines = OPPONENT_LINES[opp.key];
+    if (oppLines) showDialog(opp.name, portraits[opp.key], [oppLines.intro], null);
+  }
   // Warm both active characters' sprite sets now, before the first
   // drawSprites() call needs them - avoids a blank/undefined-image frame
   // while the lazy loader's first fetch is still in flight.
