@@ -2834,7 +2834,15 @@ function beginBattingEasyWithPower() {
   resetBall();
 
   app.tutorial.practiceStep = 'bat_easy_power';
-  app.tutorial.forcedPitch = 'EFastball';
+  // Riser, not another EFastball (requested): a brand-new player's very
+  // first REAL at-bat right after the tutorial could be their first-ever
+  // look at a moving pitch, which is a rough way to meet a strikeout. Riser
+  // is the safe pick for that preview - like Curveball it visibly curves
+  // (see applyPitchVelocity()'s own comment), but unlike Curveball it's
+  // still a guaranteed strike (lands back inside the zone), so this drill
+  // can't itself become an unfair miss - and unlike Knuckleball it isn't
+  // chaotic, just a smooth, learnable dip-then-rise arc.
+  app.tutorial.forcedPitch = 'ERiser';
   app.tutorial.awaitingContact = true;
   app.tutorial.battingMissCount = 0;
   app.tutorial.battingHintShown = false;
