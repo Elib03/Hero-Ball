@@ -267,6 +267,7 @@ function defaultSaveData() {
     version: 1,
     playerUnlocked: { antman: true },
     cpuUnlocked: { antman: true },
+    tournamentTrophies: {}, // character key -> true, set by handleTournamentProgression() on a championship run
     stats: {
       everHitHomeRun: false,
       totalStrikeouts: 0,
@@ -298,6 +299,7 @@ function loadSaveData() {
       version: fresh.version,
       playerUnlocked: Object.assign({}, fresh.playerUnlocked, saved.playerUnlocked),
       cpuUnlocked: Object.assign({}, fresh.cpuUnlocked, saved.cpuUnlocked),
+      tournamentTrophies: Object.assign({}, fresh.tournamentTrophies, saved.tournamentTrophies),
       stats: {
         everHitHomeRun: !!(saved.stats && saved.stats.everHitHomeRun),
         totalStrikeouts: (saved.stats && saved.stats.totalStrikeouts) || 0,
@@ -858,10 +860,25 @@ const app = {
   // not directly on 'mode' - asks whether the player already knows the
   // controls (-> straight to the normal main menu) or wants the tutorial
   // first (-> startTutorial()), instead of assuming either way.
-  screen: 'onboarding', // onboarding | mode | characterSolo | characterVersus | upgrades | mobileCharacterSelect | mobileCpuSelect | mobileUpgrades | play | gameOver | unlockReveal
+  screen: 'onboarding', // onboarding | mode | soloModeSelect | characterSolo | characterVersus | upgrades | mobileCharacterSelect | mobileCpuSelect | mobileUpgrades | play | gameOver | unlockReveal
   onboardingIndex: 0, // 0 = "Show Me The Tutorial", 1 = "I Know The Controls"
   mode: null, // 'solo' | 'versus'
   modeSelectIndex: 0, // 0 = Solo, 1 = 2 Player
+  // Solo mode only (requested) - Story is today's single free-play match,
+  // Tournament is the 8-character single-elimination bracket (see
+  // startTournament()/handleTournamentProgression()). Reset to 'story' once
+  // a tournament run ends (win or lose) so a later plain Solo match isn't
+  // mistaken for still being mid-bracket.
+  soloGameMode: 'story', // 'story' | 'tournament'
+  soloModeSelectIndex: 0, // 0 = Story Mode, 1 = Tournament Mode - cursor on the picker screen
+  // Set by startTournament() when Tournament Mode is picked; null otherwise.
+  // opponents: 7 distinct random CHARACTERS keys (the bracket's other
+  // competitors) - opponents[round] is always the player's actual opponent
+  // for that round. round: 0/1/2 = quarterfinal/semifinal/final. wins: how
+  // many rounds the player has won so far this run (also the reward tier on
+  // elimination - see tournamentReward()). totalRuns: runs scored across
+  // every match this run, added into the coin reward.
+  tournament: null,
   difficultyIndex: 0, // default Easy - Normal was too punishing for a brand-new player's very first match
   player1Index: 0,
   player2Index: 0,
@@ -1685,12 +1702,30 @@ function evaluateGameEndUnlocks() {
   // Reset every call (not just inside the win branch below) so a loss never
   // leaves a stale amount from an earlier win showing on drawGameOver().
   app.lastCoinsEarned = 0;
+  // Tournament mode (requested) doesn't pay out per-match like a Story win -
+  // it pays out once, right here, the moment the run actually ends (a loss,
+  // or winning the final) - not later in handleTournamentProgression(),
+  // since drawGameOver() (which shows app.lastCoinsEarned) renders before
+  // that ever runs. Every match's runs count toward the eventual reward
+  // regardless of that match's own outcome.
+  if (app.soloGameMode === 'tournament' && app.tournament) {
+    app.tournament.totalRuns += awayScore;
+    const wonTheFinal = app.gameOverP1Wins && app.tournament.round >= 2;
+    if (!app.gameOverP1Wins || wonTheFinal) {
+      const coinsEarned = tournamentReward(wonTheFinal ? 3 : app.tournament.wins);
+      saveData.coins += coinsEarned;
+      app.lastCoinsEarned = coinsEarned;
+      if (wonTheFinal) saveData.tournamentTrophies[CHARACTERS[app.player1Index].key] = true;
+    }
+  }
   if (app.gameOverP1Wins) {
     // Only ever called for solo (see switchSides()'s call site), where p1
     // is the away team - awayScore is the human's own score here.
-    const coinsEarned = WIN_BASE_COINS + awayScore * WIN_COINS_PER_RUN;
-    saveData.coins += coinsEarned;
-    app.lastCoinsEarned = coinsEarned;
+    if (app.soloGameMode !== 'tournament') {
+      const coinsEarned = WIN_BASE_COINS + awayScore * WIN_COINS_PER_RUN;
+      saveData.coins += coinsEarned;
+      app.lastCoinsEarned = coinsEarned;
+    }
 
     if (awayScore >= 10) unlockCharacter('player', 'pyro');
     if (app.maxDeficitThisGame >= 3) unlockCharacter('player', 'gambler');
@@ -2113,6 +2148,7 @@ window.addEventListener('keydown', e => {
 
   if (app.screen === 'onboarding') { handleOnboardingKey(key); return; }
   if (app.screen === 'mode') { handleModeSelectKey(key); return; }
+  if (app.screen === 'soloModeSelect') { handleSoloModeSelectKey(key); return; }
 
   if (app.screen === 'characterSolo') {
     handleSoloSelectKey(key);
@@ -2177,10 +2213,106 @@ function handleModeSelectKey(key) {
   if (key === 'arrowup' || key === 'w') app.modeSelectIndex = (app.modeSelectIndex + 2) % 3;
   else if (key === 'arrowdown' || key === 's') app.modeSelectIndex = (app.modeSelectIndex + 1) % 3;
   else if (key === 'enter') {
-    if (app.modeSelectIndex === 1) { app.mode = 'solo'; app.screen = 'characterSolo'; randomizeCharacterCursor('solo'); }
+    if (app.modeSelectIndex === 1) { enterSoloMode(); }
     else if (app.modeSelectIndex === 2) { app.mode = 'versus'; app.screen = 'characterVersus'; randomizeCharacterCursor('versus'); }
     else startTutorial();
   }
+}
+
+// Every "start a Solo run" entry point (mode-select keyboard/click, mobile
+// Play button) funnels through here (requested) - routes to the Story/
+// Tournament picker instead of straight to character select, so the choice
+// only needs to be made in one place.
+function enterSoloMode() {
+  app.mode = 'solo';
+  app.screen = 'soloModeSelect';
+  app.soloModeSelectIndex = 0;
+}
+
+const SOLO_MODE_STORY_BTN = { x: 100, y: 150, w: 200, h: 70 };
+const SOLO_MODE_TOURNAMENT_BTN = { x: 100, y: 245, w: 200, h: 70 };
+function pointInSoloModeStoryBtn(x, y) { return pointInUnitRect(x, y, SOLO_MODE_STORY_BTN); }
+function pointInSoloModeTournamentBtn(x, y) { return pointInUnitRect(x, y, SOLO_MODE_TOURNAMENT_BTN); }
+
+function drawSoloModeSelectPrompt() {
+  drawMenuBackground();
+  drawMenuParticles();
+  drawCharacterShowcase();
+  drawTitleLogo();
+
+  rect(0, 0, CANVAS_W, CANVAS_H, 'black', 0.75);
+
+  text('Choose Your Mode', CANVAS_W / 2, toY(110), 30, 'white', 1, 'center', 900);
+
+  const storySelected = !IS_MOBILE && app.soloModeSelectIndex === 0;
+  const tourneySelected = !IS_MOBILE && app.soloModeSelectIndex === 1;
+  drawOnboardingChoice(SOLO_MODE_STORY_BTN, 'Story Mode', storySelected);
+  drawOnboardingChoice(SOLO_MODE_TOURNAMENT_BTN, 'Tournament Mode', tourneySelected);
+
+  if (IS_MOBILE) return;
+
+  const cursorY = app.soloModeSelectIndex === 0 ? SOLO_MODE_STORY_BTN.y + SOLO_MODE_STORY_BTN.h / 2 : SOLO_MODE_TOURNAMENT_BTN.y + SOLO_MODE_TOURNAMENT_BTN.h / 2;
+  text('▶', toX(SOLO_MODE_STORY_BTN.x - 10), toY(cursorY), 30, 'white', 1, 'right', 900);
+  text('Up / Down · Enter To Select', CANVAS_W / 2, toY(345), 16, 'white', 0.85, 'center', 700);
+}
+function handleSoloModeSelectKey(key) {
+  if (key === 'escape') { app.screen = 'mode'; return; }
+  if (key === 'arrowup' || key === 'arrowdown' || key === 'w' || key === 's') {
+    app.soloModeSelectIndex = app.soloModeSelectIndex === 0 ? 1 : 0;
+  } else if (key === 'enter') {
+    if (app.soloModeSelectIndex === 0) pickStoryMode(); else pickTournamentMode();
+  }
+}
+function handleSoloModeSelectClick(x, y) {
+  if (pointInSoloModeStoryBtn(x, y)) { pickStoryMode(); return; }
+  if (pointInSoloModeTournamentBtn(x, y)) { pickTournamentMode(); return; }
+}
+function pickStoryMode() {
+  app.soloGameMode = 'story';
+  app.screen = IS_MOBILE ? 'mobileCharacterSelect' : 'characterSolo';
+  randomizeCharacterCursor('solo');
+}
+function pickTournamentMode() {
+  app.soloGameMode = 'tournament';
+  startTournament();
+  app.screen = IS_MOBILE ? 'mobileCharacterSelect' : 'characterSolo';
+  randomizeCharacterCursor('solo');
+  // The opponent card is fixed to this round's bracket opponent, not
+  // player-browsable (see drawSoloSelect()'s tournament branch) - already
+  // "locked" the moment the screen loads.
+  app.cpuBatterIndex = CHARACTERS.findIndex(c => c.key === app.tournament.opponents[0]);
+  app.cpuLocked = true;
+}
+
+// 8-player single-elimination bracket (requested): 7 distinct random
+// opponents cover every round the player could reach (quarterfinal/
+// semifinal/final - see app.tournament's own comment), pre-shuffled so
+// opponents[round] is always already random and distinct without needing to
+// simulate the other bracket pairs at all.
+function startTournament() {
+  const pool = CHARACTERS.map(c => c.key);
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = randRange(0, i + 1);
+    const tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+  }
+  app.tournament = { opponents: pool.slice(0, 7), round: 0, wins: 0, totalRuns: 0 };
+}
+
+// Guards against the round-0 opponent (picked before the player chose their
+// own character) landing on the exact character the player just locked in -
+// re-rolls just that slot from whoever's left unused. Only round 0 can ever
+// collide since every later round's opponent was already fixed at
+// generation time, long before this match's specific pairing mattered.
+function fixTournamentSelfMatchIfNeeded() {
+  if (app.soloGameMode !== 'tournament' || !app.tournament || app.tournament.round !== 0) return;
+  const playerKey = CHARACTERS[app.player1Index].key;
+  if (app.tournament.opponents[0] !== playerKey) return;
+  const used = new Set(app.tournament.opponents);
+  used.add(playerKey);
+  const pool = CHARACTERS.map(c => c.key).filter(k => !used.has(k));
+  if (pool.length === 0) return;
+  app.tournament.opponents[0] = pool[randRange(0, pool.length)];
+  app.cpuBatterIndex = CHARACTERS.findIndex(c => c.key === app.tournament.opponents[0]);
 }
 
 function goBackToModeSelect() {
@@ -2303,6 +2435,7 @@ function dismissUnlockReveal() {
 }
 
 function proceedToCharacterSelectAfterGameOver() {
+  if (app.mode === 'solo' && app.soloGameMode === 'tournament') { handleTournamentProgression(); return; }
   if (pokiBreakPending) return;
   pokiCommercialBreak(() => {
     app.screen = IS_MOBILE ? 'mobileCharacterSelect' : (app.mode === 'versus' ? 'characterVersus' : 'characterSolo');
@@ -2315,12 +2448,61 @@ function proceedToCharacterSelectAfterGameOver() {
   });
 }
 
+// Coins awarded once a tournament run ends, indexed by how many rounds were
+// WON (0 = eliminated round 1, 1 = eliminated round 2/semifinal, 2 =
+// eliminated round 3/final = runner-up, 3 = won the final = champion) - see
+// the confirmed table from planning. Every tier also adds
+// app.tournament.totalRuns * WIN_COINS_PER_RUN on top of this base.
+const TOURNAMENT_COINS_BY_WINS = [30, 150, 400, 1000];
+function tournamentReward(roundsWon) {
+  return TOURNAMENT_COINS_BY_WINS[roundsWon] + app.tournament.totalRuns * WIN_COINS_PER_RUN;
+}
+
+// Returns to the normal post-tournament flow: same character-select screen
+// a Story match would land on, tournament flag cleared so a later plain Solo
+// match isn't mistaken for still being mid-bracket.
+function endTournamentRun() {
+  app.soloGameMode = 'story';
+  app.tournament = null;
+  if (pokiBreakPending) return;
+  pokiCommercialBreak(() => {
+    app.screen = IS_MOBILE ? 'mobileCharacterSelect' : 'characterSolo';
+    app.player1Locked = false;
+    app.cpuLocked = false;
+    app.readyOpacity = 0;
+    randomizeCharacterCursor('solo');
+    resetMatchState();
+  });
+}
+
+// Called once the player leaves the gameOver screen after a tournament
+// match (see proceedToCharacterSelectAfterGameOver()) - decides whether the
+// run just ended (loss, or a won final) or continues into the next round.
+// The reward itself (coins/trophy) was already granted back in
+// evaluateGameEndUnlocks(), in time to show on the gameOver screen the
+// player is now leaving - this only handles routing.
+function handleTournamentProgression() {
+  if (!app.gameOverP1Wins || app.tournament.round >= 2) { endTournamentRun(); return; }
+  app.tournament.wins++;
+  // Advanced - same player character carries forward into the next round
+  // with no character re-select (requested); the next opponent was already
+  // fixed at bracket-generation time (see startTournament()).
+  app.tournament.round++;
+  app.cpuBatterIndex = CHARACTERS.findIndex(c => c.key === app.tournament.opponents[app.tournament.round]);
+  if (pokiBreakPending) return;
+  pokiCommercialBreak(() => {
+    resetMatchState();
+    beginGame();
+  });
+}
+
 function handleSoloSelectKey(key) {
   if (key === 'escape') { goBackToModeSelect(); return; }
   // Player card: browse with A/D (freely, including locked characters - the
   // whole point of a content-locked card is to be teased while browsing),
   // lock in with S (blocked for a still-locked character - see
   // isPlayerUnlocked()).
+  const isTournament = app.soloGameMode === 'tournament';
   if (key === 'a') {
     app.player1Locked = false; app.readyOpacity = 0;
     app.player1Index = (app.player1Index + CHARACTERS.length - 1) % CHARACTERS.length;
@@ -2328,17 +2510,22 @@ function handleSoloSelectKey(key) {
     app.player1Locked = false; app.readyOpacity = 0;
     app.player1Index = (app.player1Index + 1) % CHARACTERS.length;
   } else if (key === 's') {
-    if (isPlayerUnlocked(CHARACTERS[app.player1Index].key)) app.player1Locked = true;
+    if (isPlayerUnlocked(CHARACTERS[app.player1Index].key)) {
+      app.player1Locked = true;
+      fixTournamentSelfMatchIfNeeded();
+    }
   // CPU card: same pattern, mirroring handleVersusSelectKey()'s P2 controls
   // (arrow left/right to browse, arrow down to confirm) since arrows are
-  // otherwise unused on this screen.
-  } else if (key === 'arrowleft') {
+  // otherwise unused on this screen. Tournament mode's opponent is fixed
+  // (already locked, see pickTournamentMode()) - browsing is disabled so it
+  // can't be un-locked and swapped out.
+  } else if (key === 'arrowleft' && !isTournament) {
     app.cpuLocked = false; app.readyOpacity = 0;
     app.cpuBatterIndex = (app.cpuBatterIndex + CHARACTERS.length - 1) % CHARACTERS.length;
-  } else if (key === 'arrowright') {
+  } else if (key === 'arrowright' && !isTournament) {
     app.cpuLocked = false; app.readyOpacity = 0;
     app.cpuBatterIndex = (app.cpuBatterIndex + 1) % CHARACTERS.length;
-  } else if (key === 'arrowdown') {
+  } else if (key === 'arrowdown' && !isTournament) {
     if (isCpuUnlocked(CHARACTERS[app.cpuBatterIndex].key)) app.cpuLocked = true;
   } else if (key === 'enter' && app.readyOpacity >= 80) {
     beginGame();
@@ -2346,6 +2533,13 @@ function handleSoloSelectKey(key) {
     buyPlayerCharacter(CHARACTERS[app.player1Index].key);
   } else if (key === 'u') {
     app.screen = 'upgrades';
+  } else if (key === 't') {
+    // TEMPORARY DEBUG (requested): instantly grants a tournament trophy to
+    // whichever character is currently browsed/locked in the Player slot, so
+    // the portrait-card badge and reveal can be tested without grinding a
+    // full bracket. Remove on request.
+    saveData.tournamentTrophies[CHARACTERS[app.player1Index].key] = true;
+    persistSaveData();
   }
 }
 
@@ -3248,6 +3442,7 @@ function handlePointerDown(x, y) {
   if (pokiBreakPending) return; // don't let a click/tap during an ad break reach whatever screen is underneath it
   if (app.screen === 'onboarding') { handleOnboardingClick(x, y); return; }
   if (app.screen === 'mode') { handleModeClick(x, y); return; }
+  if (app.screen === 'soloModeSelect') { handleSoloModeSelectClick(x, y); return; }
   if (app.screen === 'characterSolo') {
     if (pointInBackButton(x, y)) { goBackToModeSelect(); return; }
     if (pointInUnitRect(x, y, UPGRADES_BUTTON)) { app.screen = 'upgrades'; return; }
@@ -3366,8 +3561,7 @@ canvas.addEventListener('touchcancel', releaseJoystickTouch, { passive: true });
 function handleModeClick(x, y) {
   if (IS_MOBILE) {
     if (pointInPlayButton(x, y)) {
-      app.mode = 'solo'; app.screen = 'mobileCharacterSelect';
-      randomizeCharacterCursor('solo');
+      enterSoloMode();
     } else if (pointInMobileTutorialButton(x, y)) {
       startTutorial();
     }
@@ -3379,8 +3573,7 @@ function handleModeClick(x, y) {
     randomizeCharacterCursor('versus');
   } else if (x >= toX(125) && x <= toX(275) && y >= toY(160) && y <= toY(240)) {
     app.modeSelectIndex = 1;
-    app.mode = 'solo'; app.screen = 'characterSolo';
-    randomizeCharacterCursor('solo');
+    enterSoloMode();
   } else if (x >= toX(125) && x <= toX(275) && y >= toY(70) && y <= toY(150)) {
     app.modeSelectIndex = 0;
     startTutorial();
@@ -3621,6 +3814,33 @@ function drawLockIcon(cx, cy, size) {
   circle(cx, bodyTop + bodyH * 0.42, size * 0.07, 'rgba(255,255,255,0.9)', 1);
 }
 
+// Same hand-drawn vector-icon style as drawLockIcon() above - a permanent
+// tournament-championship badge (requested), no external asset needed.
+function drawTrophyIcon(cx, cy, size) {
+  const cupW = size * 0.62, cupH = size * 0.5, cupTop = cy - size * 0.32;
+  ctx.save();
+  ctx.fillStyle = 'gold';
+  ctx.strokeStyle = 'rgba(120,90,0,0.9)';
+  ctx.lineWidth = size * 0.05;
+  ctx.beginPath();
+  ctx.moveTo(cx - cupW / 2, cupTop);
+  ctx.lineTo(cx + cupW / 2, cupTop);
+  ctx.lineTo(cx + cupW * 0.28, cupTop + cupH);
+  ctx.lineTo(cx - cupW * 0.28, cupTop + cupH);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx - cupW / 2 - size * 0.08, cupTop + cupH * 0.28, size * 0.16, Math.PI * 0.3, Math.PI * 1.55);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx + cupW / 2 + size * 0.08, cupTop + cupH * 0.28, size * 0.16, Math.PI * 1.45, Math.PI * 2.7);
+  ctx.stroke();
+  ctx.restore();
+  rect(cx - size * 0.06, cupTop + cupH, size * 0.12, size * 0.16, 'gold', 1);
+  rect(cx - size * 0.22, cupTop + cupH + size * 0.16, size * 0.44, size * 0.08, 'gold', 1);
+}
+
 // contentLocked/conditionText: the "not yet unlocked" state (Solo mode's
 // progression system) - distinct from the `locked` param above, which
 // already meant "this player has confirmed their pick" (controls only the
@@ -3670,6 +3890,13 @@ function drawPortraitCard(cx, cy, w, h, charObj, locked, borderColor, contentLoc
   }
   text(charObj.name, cx, cy - h / 2 - 18, 22, charObj.color, 1, 'center', 700);
   drawShoulderPowerIcons(cx, cy, w, h, charObj);
+  // Permanent tournament-championship badge (requested) - the card's
+  // top-right corner is clear of every other element (name sits above the
+  // box, shoulder icons hug the center, buy/condition text is bottom-
+  // centered) at both desktop and mobile card sizes.
+  if (saveData.tournamentTrophies[charObj.key]) {
+    drawTrophyIcon(cx + w / 2 - w * 0.12, cy - h / 2 + h * 0.09, Math.min(w, h) * 0.22);
+  }
 }
 
 function drawReadyOverlay(label) {
@@ -3729,7 +3956,9 @@ function handleMobileCharacterSelectTap(x, y) {
     return;
   }
   if (pointInMobileConfirm(x, y)) {
-    app.player1Locked = true; app.screen = 'mobileCpuSelect';
+    app.player1Locked = true;
+    fixTournamentSelfMatchIfNeeded();
+    app.screen = 'mobileCpuSelect';
   }
 }
 
@@ -3743,10 +3972,14 @@ function drawMobileCpuSelect() {
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
   rect(0, 0, CANVAS_W, CANVAS_H, null, 1, 'black', 2);
 
+  const isTournament = app.soloGameMode === 'tournament';
   const cpu = CHARACTERS[app.cpuBatterIndex];
-  text('Choose Your Opponent', CANVAS_W / 2, toY(32), 26, 'white', 1, 'center', 900);
+  text(isTournament ? 'Round ' + (app.tournament.round + 1) + ' of 3' : 'Choose Your Opponent', CANVAS_W / 2, toY(32), 26, 'white', 1, 'center', 900);
+  // Tournament opponent is a random draw, not gated by normal CPU
+  // progression - always shown fully revealed (see drawSoloSelect()'s own
+  // comment on the desktop equivalent of this).
   drawPortraitCard(CANVAS_W / 2, toY(190), lenX(150), toLen(220), cpu, false, cpu.color,
-    !isCpuUnlocked(cpu.key), cpuUnlockConditionText(cpu.key));
+    isTournament ? false : !isCpuUnlocked(cpu.key), isTournament ? null : cpuUnlockConditionText(cpu.key));
 
   drawBackButton();
 
@@ -3780,18 +4013,26 @@ function drawSoloSelect() {
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
   rect(0, 0, CANVAS_W, CANVAS_H, null, 1, 'black', 2);
 
+  const isTournament = app.soloGameMode === 'tournament';
   const cpu = CHARACTERS[app.cpuBatterIndex];
   text('Player', toX(100), toY(50), 30, 'white', 1, 'center', 900);
   text('Opponent', toX(300), toY(50), 30, 'white', 1, 'center', 900);
   const playerLocked = !isPlayerUnlocked(CHARACTERS[app.player1Index].key);
   text('A / D  ·  S To Select' + (playerLocked ? '  ·  B To Buy' : ''), toX(100), toY(345), 15, 'white', 0.85);
-  text('← / →  ·  Down To Select', toX(300), toY(345), 15, 'white', 0.85);
+  if (isTournament) {
+    text('Round ' + (app.tournament.round + 1) + ' of 3', toX(300), toY(345), 15, 'gold', 1);
+  } else {
+    text('← / →  ·  Down To Select', toX(300), toY(345), 15, 'white', 0.85);
+  }
 
   const char = CHARACTERS[app.player1Index];
   drawPortraitCard(toX(100), toY(200), lenX(150), toLen(220), char, app.player1Locked, char.color,
     !isPlayerUnlocked(char.key), playerUnlockConditionText(char.key), characterBuyCost(char.key));
+  // Tournament opponent is a random draw, not gated by normal CPU
+  // progression - always shown fully revealed, never the silhouette/lock
+  // treatment isCpuUnlocked() would otherwise apply.
   drawPortraitCard(toX(300), toY(200), lenX(150), toLen(220), cpu, app.cpuLocked, cpu.color,
-    !isCpuUnlocked(cpu.key), cpuUnlockConditionText(cpu.key));
+    isTournament ? false : !isCpuUnlocked(cpu.key), isTournament ? null : cpuUnlockConditionText(cpu.key));
 
   drawBackButton();
   text('Coins: ' + saveData.coins, CANVAS_W / 2, toY(UPGRADES_BUTTON.y - 12), 15, 'gold', 1, 'center', 700);
@@ -4755,6 +4996,7 @@ function render() {
   ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
   if (app.screen === 'onboarding') drawOnboardingPrompt();
   else if (app.screen === 'mode') drawModeSelect();
+  else if (app.screen === 'soloModeSelect') drawSoloModeSelectPrompt();
   else if (app.screen === 'characterSolo') drawSoloSelect();
   else if (app.screen === 'characterVersus') drawVersusSelect();
   else if (app.screen === 'upgrades') drawUpgradesScreen();
