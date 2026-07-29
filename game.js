@@ -5982,4 +5982,12 @@ function frame(ts) {
 
 // app.screen defaults to 'onboarding' (see the app object) - the very first
 // thing a page load shows is drawOnboardingPrompt(), not the main menu.
+// New players (requested) skip that question entirely and go straight into
+// the tutorial instead of being asked - "new" means no save data has ever
+// been written yet (see SAVE_KEY/loadSaveData()), the same signal the rest
+// of the game already treats as "hasn't played before". Returning players
+// (a save already exists) still see the onboarding prompt as before.
+if (localStorage.getItem(SAVE_KEY) === null) {
+  startTutorial();
+}
 requestAnimationFrame(frame);
