@@ -1023,7 +1023,7 @@ const app = {
   // duplicating the whole game loop.
   tutorial: {
     active: false,
-    practiceStep: null, // null | 'pitch' | 'bat_aim_demo' | 'bat_easy' | 'bat_easy_power'
+    practiceStep: null, // null | 'bat_aim_demo' | 'bat_easy' | 'bat_easy_power' | 'awaiting_pitch_turn' | 'pitch'
     forcedPitch: null, // when set, cpuPitch() throws exactly this pitch instead of rolling one
     forceWhiffCpuBatter: false, // pitching practice: the CPU batter never makes contact
     forceStrikeOnBall: false, // pitching practice: every pitch counts as a Strike, never a Ball
@@ -1613,13 +1613,18 @@ function recordOut() {
   // cpuSwing()) and every Ball is redirected into a Strike (see recordBall()),
   // so the only way this ever fires during that drill is the 3rd strike - a
   // genuine strikeout, already clearly signposted by the 3rd "Strike" banner.
-  // Bail out before the real Out banner/sound and before touching the real
-  // out counters (which persist across a whole half-inning and would
-  // eventually trigger a real switchSides()/game-over) - the scripted drill
-  // only ever wants exactly one, with no extra banner stacked on top.
-  if (app.tutorial.active && app.tutorial.forceStrikeOnBall) { app.tutorial.pitchingStrikeoutDone = true; return; }
-  showCallBanner('Out');
-  playSound(SOUNDS.out);
+  // The tutorial now runs inside the actual first real match rather than a
+  // discarded practice bubble (requested), so this out DOES need to count for
+  // real (see stepTutorial()'s 'awaiting_pitch_turn' handoff) - only the
+  // redundant "Out" banner/sound stacked right on top of that 3rd "Strike"
+  // banner gets skipped, same as before.
+  const isTutorialPitchDrillOut = app.tutorial.active && app.tutorial.forceStrikeOnBall;
+  if (isTutorialPitchDrillOut) {
+    app.tutorial.pitchingStrikeoutDone = true;
+  } else {
+    showCallBanner('Out');
+    playSound(SOUNDS.out);
+  }
   // Every out ends that batter's plate appearance, including a Ground Out
   // reached via contact (see the ball.y >= toY(300) ground-bounce check in
   // update(), which calls recordOut() directly) - Future Sight must clear
@@ -2714,9 +2719,17 @@ function advanceTutorialDialog() {
 // gameplay input, not on a menu click. advanceTutorialDialog() (the very
 // first thing a player can do once the tutorial screen is up - dismiss/
 // advance Coach's line) is where it actually fires.
+// The tutorial now runs INSIDE the actual first real match instead of a
+// separate practice bubble thrown away afterward (requested) - every guided
+// moment below is a real pitch/swing in a real, scoring 2-inning Story-mode
+// match, and finishTutorial() just stops guiding rather than resetting
+// anything. This is why it reuses startMatch() itself (real difficulty
+// derivation, real opponent-intro dialogue plumbing, real crowd sound) rather
+// than hand-rolling a parallel setup - see beginBattingAimDemo()/
+// beginPitchPractice()/finishTutorial() for how the guidance layers on top.
 function startTutorial() {
   app.mode = 'solo';
-  app.difficultyIndex = 0;
+  app.soloGameMode = 'story';
   // Antman - unlocked by default, so a brand-new player's tutorial uses the
   // exact power-ups (Ball Shrink pitch, Expand Shot bat) they'll actually
   // have available the first time they play for real.
@@ -2726,27 +2739,24 @@ function startTutorial() {
   // ever changes again (it already did once, for the progression system).
   app.cpuBatterIndex = CHARACTERS.findIndex(c => c.key === 'bruiser');
   resetMatchState(); // also zeroes out every app.tutorial field - re-armed right below
-  app.screen = 'play';
   app.tutorial.active = true;
-
-  // Pitching first: the human throws (WASD/Z on desktop, on-screen
-  // buttons on mobile - see drawPitchButtons()/drawMobileControls()), the
-  // CPU bats. Solo's assignActiveRoles() gives p1 the pitcher role when
-  // homePitching is false (p1 is the away team there, and away pitches
-  // once homePitching flips to false - see that function's own comment).
-  app.homePitching = false;
-  assignActiveRoles();
-  getPitcherFrames(pitcherChar().key);
-  getBatterFrames(batterChar().key);
-  resetBall();
+  // Real match setup (screen='play', homePitching=true, difficulty derived
+  // from Bruiser's rank - already Easy, sprite warm, resetBall(), crowd
+  // sound). homePitching=true gives the human the BATTER role first (see
+  // assignActiveRoles()'s own comment) - batting first matches solo's real
+  // top-of-1st order, unlike the old pitching-first tutorial. This also
+  // queues Bruiser's own opponent-intro line via showDialog() - immediately
+  // overwritten by Coach's greeting below before it's ever shown, so nothing
+  // stacks two dialogues in a row at the very start.
+  startMatch();
 
   // Just the opening greeting stays a blocking dialogue line - everything
-  // after it (see beginPitchPractice()/stepTutorial()) is delivered via the
+  // after it (see beginBattingAimDemo()/stepTutorial()) is delivered via the
   // non-blocking caption banner instead, with the coach talking "from the
   // side" while the game keeps running and the player can act immediately.
   showTutorialDialog([
     "Hey, rookie! I'm Coach. Let's get you ready for the big leagues.",
-  ], beginPitchPractice);
+  ], beginBattingAimDemo);
 }
 
 function beginPitchPractice() {
@@ -2757,8 +2767,8 @@ function beginPitchPractice() {
   app.tutorial.introTicks = 0;
   app.tutorial.pitchIntroWaitingForResolve = false;
   app.tutorial.captionText = IS_MOBILE
-    ? 'First up: pitching! Tap the Fastball button below to throw your first pitch.'
-    : 'First up: pitching! Press W to throw a Fastball.';
+    ? 'Now pitching! Tap the Fastball button below to throw your first pitch.'
+    : 'Now pitching! Press W to throw a Fastball.';
 }
 
 // A real pitch launches like any other, then gets frozen mid-flight (see
@@ -2772,10 +2782,10 @@ function beginBattingAimDemo() {
   app.tutorial.forceWhiffCpuBatter = false;
   app.tutorial.forceStrikeOnBall = false;
 
-  // Switch roles without touching score/innings: now the CPU pitches and the
-  // human bats - same as a real solo match's default starting configuration
-  // (solo's assignActiveRoles() gives p1 the batter role when homePitching
-  // is true - p1 is the away team there, and away bats first).
+  // Already the human-batting/CPU-pitching configuration startMatch() set up
+  // (batting comes first now, matching solo's real top-of-1st order) -
+  // re-asserted here defensively rather than assumed, since this same setup
+  // is shared with beginBattingEasy()/beginBattingEasyWithPower() below.
   app.homePitching = true;
   assignActiveRoles();
   getPitcherFrames(pitcherChar().key);
@@ -2834,14 +2844,15 @@ function beginBattingEasyWithPower() {
   resetBall();
 
   app.tutorial.practiceStep = 'bat_easy_power';
-  // Riser, not another EFastball (requested): a brand-new player's very
-  // first REAL at-bat right after the tutorial could be their first-ever
-  // look at a moving pitch, which is a rough way to meet a strikeout. Riser
-  // is the safe pick for that preview - like Curveball it visibly curves
-  // (see applyPitchVelocity()'s own comment), but unlike Curveball it's
-  // still a guaranteed strike (lands back inside the zone), so this drill
-  // can't itself become an unfair miss - and unlike Knuckleball it isn't
-  // chaotic, just a smooth, learnable dip-then-rise arc.
+  // Riser, not another EFastball (requested): once guidance ends, the rest
+  // of this same at-bat's pitches are real and unguided - the player's
+  // first-ever look at a moving pitch shouldn't also be their first
+  // unguided one, which is a rough way to meet a strikeout. Riser is the
+  // safe pick for that preview - like Curveball it visibly curves (see
+  // applyPitchVelocity()'s own comment), but unlike Curveball it's still a
+  // guaranteed strike (lands back inside the zone), so this drill can't
+  // itself become an unfair miss - and unlike Knuckleball it isn't chaotic,
+  // just a smooth, learnable dip-then-rise arc.
   app.tutorial.forcedPitch = 'ERiser';
   app.tutorial.awaitingContact = true;
   app.tutorial.battingMissCount = 0;
@@ -2853,23 +2864,43 @@ function beginBattingEasyWithPower() {
     : 'Press M to use your power-up, then swing when the pitch comes in!';
 }
 
-// Ending the tutorial (naturally or via the Skip Tutorial button) used to
-// dump the player back at the main mode-select menu - Solo/Tournament-or-
-// Story/character-select/opponent-select all still stood between "just
-// learned how to play" and an actual match, which is exactly where Poki's
-// retention dashboard shows new players dropping off. Straight into a real
-// Story-mode match instead (requested) - same default Antman-vs-Antman
-// pairing a fresh Solo pick already lands on (see randomizeCharacterCursor()),
-// so this isn't inventing a new matchup, just skipping the menus to reach it.
+// Batting guidance is done (2 successful contacts, or gave up after 8
+// misses - see stepTutorial()) - the rest of THIS SAME at-bat's top-of-1st
+// plays out for real at full difficulty, no more forced pitches/guaranteed
+// contact, until the inning naturally ends and it becomes the human's turn
+// to pitch (see stepTutorial()'s 'awaiting_pitch_turn' check, watching for
+// app.activePitcherKey to flip to 'p1' the normal way - real outs, real
+// switchSides(), nothing scripted). That's the cue to start beginPitchPractice().
+function awaitPitchingTurn() {
+  app.tutorial.practiceStep = 'awaiting_pitch_turn';
+  app.tutorial.forcedPitch = null;
+  app.tutorial.awaitingContact = false;
+  app.tutorial.requirePowerBeforePitch = false;
+  app.tutorial.battingMissCount = 0;
+  app.tutorial.battingHintShown = false;
+  app.tutorial.captionText = '';
+}
+
+// Ending the tutorial (naturally, via the Skip Tutorial button, or the
+// pitching drill's own stuck-player fallback) used to dump the player back
+// at the main mode-select menu, or (before that) discard a whole separate
+// practice match and start a fresh one - either way, real playtime was being
+// thrown away right where Poki's retention dashboard shows new players
+// dropping off. The tutorial now runs inside the actual first real match
+// throughout (see startTutorial()), so finishing it is just switching off
+// the guidance hooks - whatever the match's real score/outs/inning currently
+// are, it just continues exactly as normal, at full difficulty, same as any
+// other match once its tutorial guidance ends.
 function finishTutorial() {
   app.showQuitConfirm = false;
-  resetMatchState();
-  app.mode = 'solo';
-  app.soloGameMode = 'story';
-  randomizeCharacterCursor('solo');
-  app.player1Locked = true;
-  app.cpuLocked = true;
-  beginGame();
+  app.tutorial.active = false;
+  app.tutorial.practiceStep = null;
+  app.tutorial.forcedPitch = null;
+  app.tutorial.forceWhiffCpuBatter = false;
+  app.tutorial.forceStrikeOnBall = false;
+  app.tutorial.awaitingContact = false;
+  app.tutorial.requirePowerBeforePitch = false;
+  app.tutorial.captionText = '';
 }
 
 // Checked once per tick from update(): watches for the flags the hooks
@@ -2957,8 +2988,8 @@ function stepTutorial() {
     t.captionText = '';
     showTutorialDialog([
       "Strikeout! Beautiful pitching, rookie!",
-      "Now let's work on your batting. I'll walk you through it step by step - watch the ball!",
-    ], beginBattingAimDemo);
+      "That's everything - now get out there and be a Hero!",
+    ], finishTutorial);
     return;
   }
 
@@ -3016,11 +3047,13 @@ function stepTutorial() {
       ], beginBattingEasyWithPower);
     } else {
       // Second contact (bat_easy_power, power-up used) - that's the whole
-      // batting drill, no separate full at-bat needed after this.
+      // batting drill. Pitching is taught once it's naturally the human's
+      // turn (see awaitPitchingTurn()/stepTutorial()'s 'awaiting_pitch_turn'
+      // check) - the rest of this at-bat plays out for real in the meantime.
       showTutorialDialog([
         "Nice hitting! You've got the fundamentals down.",
-        "Now get out there and be a Hero!",
-      ], finishTutorial);
+        "Keep batting for the rest of this inning - I'll cover pitching once it's your turn.",
+      ], awaitPitchingTurn);
     }
     return;
   }
@@ -3062,11 +3095,27 @@ function stepTutorial() {
     t.battingMissCount = 0;
     t.battingHintShown = false;
     // Both awaitingContact-gated steps (bat_easy and bat_easy_power) give up
-    // the same way here - a stuck player just wraps up the tutorial rather
-    // than staying blocked on either one forever.
+    // the same way here - a stuck player just keeps batting for real rather
+    // than staying blocked on either one forever. Still routes through
+    // awaitPitchingTurn() (not finishTutorial() directly) so they still get
+    // pitching guidance once it's naturally their turn.
     showTutorialDialog(
-      ["No worries - you'll get more chances in a real match! Now get out there and be a Hero!"],
-      finishTutorial
+      ["No worries - you'll get more chances! Keep batting for now - I'll cover pitching once it's your turn."],
+      awaitPitchingTurn
+    );
+    return;
+  }
+
+  // Batting guidance is done (see awaitPitchingTurn()) - the rest of the
+  // inning plays out for real and unguided until it's naturally the human's
+  // turn to pitch (bottom of the inning - assignActiveRoles() gives p1 the
+  // pitcher role there, driven entirely by real outs/switchSides(), nothing
+  // scripted). That's the cue to start the guided pitching demo.
+  if (t.practiceStep === 'awaiting_pitch_turn' && app.activePitcherKey === 'p1') {
+    t.practiceStep = null;
+    showTutorialDialog(
+      ["Nice work out there! Now let's cover pitching."],
+      beginPitchPractice
     );
   }
 }
