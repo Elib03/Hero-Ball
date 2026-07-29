@@ -3298,50 +3298,69 @@ function handleGameplayKey(key, repeat) {
     }
   }
 
+  // Solo/tutorial (requested): the same single player is always the one
+  // pitching AND batting, so there's no need to remember which key belongs
+  // to which role - either Z or M activates whichever power-up is currently
+  // live. Versus keeps Z strictly for pitching / M strictly for batting,
+  // since there both roles are simultaneously "human" (two different
+  // players sharing one keyboard) and the keys double as each player's own
+  // assigned button.
+  const eitherKeyActivatesPower = app.mode === 'solo' || app.tutorial.active;
+  const batPowerKeyPressed = key === 'm' || (eitherKeyActivatesPower && key === 'z');
+  const pitchPowerKeyPressed = key === 'z' || (eitherKeyActivatesPower && key === 'm');
+
   // Bug fix: gamblerBatting's startDiceRoll(true) shares the exact same dice
   // state (diceRolling/diceForBatting/diceCount/etc.) as the pitcher's
-  // gamblerPitching - the Z-key path is already protected from this via
-  // canStartPitch()'s !app.diceRolling check, but the M-key path had no such
-  // guard, so activating Gambler's Roll as the batter while the pitcher's
-  // own Gambler's Roll was still resolving would stomp its state mid-roll
-  // ("Gambler can overpower other gambler"). Block ALL M-powers (not just
-  // gamblerBatting) while any dice roll is in progress, matching the Z-key
-  // side's guarantee that no power-up can be activated while another is
-  // already resolving.
-  if (key === 'm' && humanBatting && app.batPowerFull && !app.diceRolling) {
-    const power = batterChar().bat.key;
-    app.batPowerFull = false;
+  // gamblerPitching - the pitch-power path is already protected from this via
+  // canStartPitch()'s !app.diceRolling check, but the bat-power path had no
+  // such guard, so activating Gambler's Roll as the batter while the
+  // pitcher's own Gambler's Roll was still resolving would stomp its state
+  // mid-roll ("Gambler can overpower other gambler"). Block ALL bat-powers
+  // (not just gamblerBatting) while any dice roll is in progress, matching
+  // the pitch-power side's guarantee that no power-up can be activated while
+  // another is already resolving.
+  if (batPowerKeyPressed && humanBatting && app.batPowerFull && !app.diceRolling) {
     app.humanUsedPowerThisGame = true; // for the "won without using a power-up" unlock condition
-    // Only Gambler's Roll/Mirror Ball/Future Sight have power-up sounds among
-    // the batting powers. Gambler's Roll and Mirror Ball don't play here -
-    // their sound is tied to a later animation beat (see startDiceRoll() and
-    // resolveUnswungStrike()'s reverseBall branch, respectively) - everything
-    // else now activates silently.
-    // Fire: the whole crosshair becomes a "critical crosshair" - any contact at
-    // all is a Home Run while it's active. Persists until contact or inning change.
-    if (power === 'fire') { app.batFireVisible = true; }
-    else if (power === 'timeStop') { app.stopTime = true; }
-    // Expand/Blackout Swing/Guaranteed Contact persist (no longer reset by
-    // resetBall()/recordStrike()) until contact happens or the inning changes,
-    // both of which route through clearPowerupVisuals().
-    else if (power === 'expandShot') { crosshairRadius = toLen(20); criticalRadius = toLen(6); app.batterBig = true; }
-    else if (power === 'gamblerBatting') { startDiceRoll(true); }
-    else if (power === 'mirrorBall') { app.mirrorBallActive = true; }
-    else if (power === 'iceShield') { app.shieldWidth = lenX(9.001); }
-    else if (power === 'futureSight') { app.showFutureSight = true; playSound(POWER_SOUNDS.futureSight); }
-    else if (power === 'blackoutSwing') { crosshairRadius = toLen(30); crosshairStyle = 'blackout'; critHidden = true; }
-    else if (power === 'pause') { app.paused = true; }
-    else if (power === 'guaranteedContact') { critHidden = true; crosshairRadius = toLen(25); }
+    activateBatPower();
   }
 
-  // Pitching powerups: Z arms the power and, unless it plays out as its own
+  // Pitching powerups: arms the power and, unless it plays out as its own
   // self-contained animation (Ghost/Meteor), immediately delivers the pitch
   // with the modifier attached so there is never a window where a second
   // pitch could be thrown mid-effect (see canStartPitch bug fix above).
-  if (key === 'z' && humanPitching && app.pitchPowerFull && canStartPitch() && !ghostBalls[0].visible) {
+  if (pitchPowerKeyPressed && humanPitching && app.pitchPowerFull && canStartPitch() && !ghostBalls[0].visible) {
     app.humanUsedPowerThisGame = true; // for the "won without using a power-up" unlock condition
     activatePitchPower();
   }
+}
+
+// Activates whichever bat power the current batter holds - extracted out of
+// the M-key handler above (mirrors activatePitchPower()) so both the M-key
+// and, in solo/tutorial only, the Z-key can trigger it without duplicating
+// this branch chain.
+function activateBatPower() {
+  const power = batterChar().bat.key;
+  app.batPowerFull = false;
+  // Only Gambler's Roll/Mirror Ball/Future Sight have power-up sounds among
+  // the batting powers. Gambler's Roll and Mirror Ball don't play here -
+  // their sound is tied to a later animation beat (see startDiceRoll() and
+  // resolveUnswungStrike()'s reverseBall branch, respectively) - everything
+  // else now activates silently.
+  // Fire: the whole crosshair becomes a "critical crosshair" - any contact at
+  // all is a Home Run while it's active. Persists until contact or inning change.
+  if (power === 'fire') { app.batFireVisible = true; }
+  else if (power === 'timeStop') { app.stopTime = true; }
+  // Expand/Blackout Swing/Guaranteed Contact persist (no longer reset by
+  // resetBall()/recordStrike()) until contact happens or the inning changes,
+  // both of which route through clearPowerupVisuals().
+  else if (power === 'expandShot') { crosshairRadius = toLen(20); criticalRadius = toLen(6); app.batterBig = true; }
+  else if (power === 'gamblerBatting') { startDiceRoll(true); }
+  else if (power === 'mirrorBall') { app.mirrorBallActive = true; }
+  else if (power === 'iceShield') { app.shieldWidth = lenX(9.001); }
+  else if (power === 'futureSight') { app.showFutureSight = true; playSound(POWER_SOUNDS.futureSight); }
+  else if (power === 'blackoutSwing') { crosshairRadius = toLen(30); crosshairStyle = 'blackout'; critHidden = true; }
+  else if (power === 'pause') { app.paused = true; }
+  else if (power === 'guaranteedContact') { critHidden = true; crosshairRadius = toLen(25); }
 }
 
 // Activates whichever pitch power the current pitcher holds - extracted out
