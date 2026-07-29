@@ -932,6 +932,10 @@ const app = {
   // human's own batting half-inning starts (see assignActiveRoles()), not
   // just once per match.
   pitchTypesHitThisInning: { fastball: false, curveball: false, riser: false, knuckleball: false },
+  // Rally difficulty (requested) - runs the human has scored in the current
+  // half-inning at bat, same per-half-inning reset point as the field above.
+  // Read by cpuPitch() to temporarily bump its pitch tier.
+  runsThisHalfInning: 0,
   newlyUnlocked: [], // [{type:'player'|'cpu', key, name}] populated by evaluateGameEndUnlocks(), shown by the unlockReveal screen
   cpuLocked: false, // mirrors player1Locked, but for the CPU character card on the solo/mobileCpuSelect screens
   lastCoinsEarned: 0, // set by evaluateGameEndUnlocks(), shown on drawGameOver()
@@ -946,8 +950,6 @@ const app = {
   tutorial: {
     active: false,
     practiceStep: null, // null | 'pitch' | 'bat_aim_demo' | 'bat_easy' | 'bat_easy_power'
-    dialogLines: [], // remaining lines of the current Coach dialogue; drawTutorialOverlay() shows dialogLines[0]
-    onDialogDone: null, // called once the last line in dialogLines has been advanced past
     forcedPitch: null, // when set, cpuPitch() throws exactly this pitch instead of rolling one
     forceWhiffCpuBatter: false, // pitching practice: the CPU batter never makes contact
     forceStrikeOnBall: false, // pitching practice: every pitch counts as a Strike, never a Ball
@@ -981,14 +983,13 @@ const app = {
     // many characters of dialogLines[0] are shown so far. Reset to 0 by
     // showTutorialDialog() and by advanceTutorialDialog() every time the
     // line actually changes.
-    revealProgress: 0,
     // Batting aim demo (bat_aim_demo, see beginBattingAimDemo()): a real
     // pitch is thrown, then frozen mid-flight before it reaches the plate
     // so the player can practice lining the crosshair up with a stationary
     // target before ever having to time a moving one. Uses captionText (a
     // lightweight, non-blocking banner - see drawTutorialOverlay()) instead
-    // of the normal dialogLines box, since the player needs to keep moving
-    // the mouse/crosshair while reading it - a real dialogLines entry
+    // of the blocking app.dialog box, since the player needs to keep moving
+    // the mouse/crosshair while reading it - a real app.dialog entry
     // freezes update() (and therefore the crosshair) entirely.
     awaitingAimFreeze: false, // true from the moment the demo pitch launches until it crosses the freeze point
     aimDemoFrozen: false, // true once the ball has actually stopped mid-flight
@@ -997,6 +998,20 @@ const app = {
     aimDemoTicks: 0, // ticks spent frozen-and-not-yet-on-target - drives the stuck-player nudge/auto-advance below
     aimDemoHintShown: false,
     captionText: '', // shown by drawTutorialOverlay() as a slim top banner while gameplay keeps running underneath
+  },
+  // Generic speaker dialogue box - the tutorial's Coach lines and solo-mode
+  // opponent intro/win/lose lines both go through this same state/rendering
+  // (see showDialog()/advanceDialog()/drawDialogOverlay()). Used to live only
+  // on app.tutorial (dialogLines/onDialogDone/revealProgress) until dialogue
+  // needed to work outside the tutorial too - showTutorialDialog()/
+  // advanceTutorialDialog() are now thin wrappers around the functions below.
+  dialog: {
+    active: false,
+    lines: [], // remaining lines of the current speaker's dialogue; drawDialogOverlay() shows lines[0]
+    onDone: null, // called once the last line has been advanced past
+    revealProgress: 0, // typewriter reveal progress (characters of lines[0] shown so far)
+    speakerName: '',
+    speakerImg: null,
   },
 };
 
@@ -1405,7 +1420,13 @@ function scoreRun() {
   // assignActiveRoles()'s comment - p1 is the away team there, so it bats
   // first) - track the largest deficit the human has faced, for the "won
   // after trailing by 3+" unlock condition (evaluateGameEndUnlocks()).
-  if (app.mode === 'solo') app.maxDeficitThisGame = Math.max(app.maxDeficitThisGame, homeScore - awayScore);
+  if (app.mode === 'solo') {
+    app.maxDeficitThisGame = Math.max(app.maxDeficitThisGame, homeScore - awayScore);
+    // Rally difficulty (requested): every 7 runs the human scores in a
+    // single half-inning at bat, cpuPitch() bumps its pitch tier up by one
+    // (capped at Hard) for the rest of that half - see its own comment.
+    if (!battingTeamIsHome()) app.runsThisHalfInning++;
+  }
 }
 
 function clearCounts(clearOuts) {
@@ -1542,7 +1563,7 @@ function recordOut() {
       showCallBanner('Switch Sides!');
       clearCounts(true);
       // Refills every half-inning regardless of inning number - power-ups
-      // stay available through extra innings too, not just innings 1-3.
+      // stay available through extra innings too, not just innings 1-2.
       app.batPowerFull = true; app.pitchPowerFull = true;
       clearPowerupVisuals();
       switchSides();
@@ -1555,10 +1576,11 @@ function switchSides() {
   app.homePitching = !app.homePitching;
   assignActiveRoles();
   if (app.homePitching) {
-    // A full inning just completed (away finished batting) - advance inning number
+    // A full inning just completed (away finished batting) - advance inning number.
+    // 2 innings total (requested) - game-over now fires once inningNumber
+    // would advance past 2, not 3.
     inningNumber++;
     if (inningNumber === 2) inningSuffix = 'nd';
-    else if (inningNumber === 3) inningSuffix = 'rd';
     else {
       if (homeScore === awayScore) {
         inningSuffix = 'th';
@@ -1632,6 +1654,7 @@ function assignActiveRoles() {
       // startMatch() or switchSides(), never mid-turn) - Oracle's "every
       // pitch type in one inning" condition gets a clean slate each time.
       app.pitchTypesHitThisInning = { fastball: false, curveball: false, riser: false, knuckleball: false };
+      app.runsThisHalfInning = 0; // rally difficulty (see scoreRun()/cpuPitch()) - fresh count each half-inning
     }
   } else {
     if (app.homePitching) { app.activePitcherKey = 'p1'; app.activeBatterKey = 'p2'; }
@@ -1984,7 +2007,12 @@ function cpuPitch() {
     ['Fastball', 'Curveball', 'Knuckleball', 'Riser'],
     ['HFastball', 'HCurveball', 'HKnuckleball', 'HRiser'],
   ];
-  const options = sets[app.difficultyIndex];
+  // Rally difficulty (requested): every 7 runs the human scores in this
+  // half-inning bumps the CPU's pitch tier up by one, capped at Hard (index
+  // 2) - "if the difficulty can't increase it stays the same." Only reads
+  // app.runsThisHalfInning in solo (it's always 0 in versus, a no-op there).
+  const boost = app.mode === 'solo' ? Math.floor(app.runsThisHalfInning / 7) : 0;
+  const options = sets[Math.min(2, app.difficultyIndex + boost)];
   app.pitch = options[randRange(0, options.length)];
   app.isPitching = true;
 }
@@ -2122,8 +2150,10 @@ function resetMatchState() {
   // tutorial fully off; startTutorial() re-arms it right after this returns.
   app.tutorial.active = false;
   app.tutorial.practiceStep = null;
-  app.tutorial.dialogLines = [];
-  app.tutorial.onDialogDone = null;
+  app.dialog.active = false;
+  app.dialog.lines = [];
+  app.dialog.onDone = null;
+  app.dialog.revealProgress = 0;
   app.tutorial.forcedPitch = null;
   app.tutorial.forceWhiffCpuBatter = false;
   app.tutorial.forceStrikeOnBall = false;
@@ -2147,6 +2177,7 @@ function resetMatchState() {
   app.hitsAllowedByHumanThisGame = 0;
   app.lastPitchThrown = '';
   app.pitchTypesHitThisInning = { fastball: false, curveball: false, riser: false, knuckleball: false };
+  app.runsThisHalfInning = 0;
   app.newlyUnlocked = [];
 }
 
@@ -2334,42 +2365,64 @@ function beginGame() {
    update() calls stepTutorial() every tick and freezes gameplay (exactly
    like the quit-confirm modal already does) while a dialogue line is up. */
 
-// Shows Coach's dialogue box with the given lines (one at a time, advanced
-// by any keypress/click - see advanceTutorialDialog()); onDone runs once the
-// player has clicked/pressed past the last line.
-function showTutorialDialog(lines, onDone) {
-  app.tutorial.dialogLines = lines.slice();
-  app.tutorial.onDialogDone = onDone || null;
-  app.tutorial.revealProgress = 0; // first line starts typing in from scratch
+// Generic speaker dialogue (see app.dialog's own comment) - shows a portrait
+// + name + lines box, advanced one line at a time by any keypress/click (see
+// advanceDialog()); onDone runs once the player has clicked/pressed past the
+// last line. Used directly for solo-mode opponent intro/win/lose lines, and
+// wrapped by showTutorialDialog() below for Coach's own lines.
+function showDialog(speakerName, speakerImg, lines, onDone) {
+  app.dialog.active = true;
+  app.dialog.speakerName = speakerName;
+  app.dialog.speakerImg = speakerImg;
+  app.dialog.lines = lines.slice();
+  app.dialog.onDone = onDone || null;
+  app.dialog.revealProgress = 0; // first line starts typing in from scratch
 }
-
-// The tutorial's first dialogue line is already showing the moment
-// startTutorial() runs (from the Tutorial button on the main menu), before
-// any further input happens, but gameplayStart() itself has to wait for the
-// player's actual first input per Poki's rules - clicking the menu button
-// to get here counts as menu navigation, not gameplay starting yet.
-// Any real interaction with Coach's dialogue box - whether it fills in the
-// currently-typing line or advances past a finished one - IS that first
-// input. Already guarded (no-ops if already active), so it's safe to call
-// unconditionally here regardless of which branch below runs.
-function advanceTutorialDialog() {
+function advanceDialog() {
+  // The tutorial's first dialogue line is already showing the moment
+  // startTutorial() runs (from the Tutorial button on the main menu), before
+  // any further input happens, but gameplayStart() itself has to wait for the
+  // player's actual first input per Poki's rules - clicking the menu button
+  // to get here counts as menu navigation, not gameplay starting yet. Any
+  // real interaction with a dialogue box - whether it fills in the
+  // currently-typing line or advances past a finished one - IS that first
+  // input. Idempotent (no-ops once already active) and harmless for
+  // non-tutorial dialogue too (gameplayStart() already fired via beginGame()
+  // by the time a real match's opponent dialogue shows).
   pokiGameplayStart();
-  const t = app.tutorial;
-  const fullLen = t.dialogLines[0] ? t.dialogLines[0].length : 0;
-  if (t.revealProgress < fullLen) {
+  const d = app.dialog;
+  const fullLen = d.lines[0] ? d.lines[0].length : 0;
+  if (d.revealProgress < fullLen) {
     // Still typing in - this press just fills in the rest immediately
     // instead of advancing, so an impatient player never has to sit through
     // the reveal animation to find out it's not done yet.
-    t.revealProgress = fullLen;
+    d.revealProgress = fullLen;
     return;
   }
-  t.dialogLines.shift();
-  t.revealProgress = 0; // next line (if any) starts typing in from scratch
-  if (t.dialogLines.length === 0) {
-    const onDone = t.onDialogDone;
-    t.onDialogDone = null;
+  d.lines.shift();
+  d.revealProgress = 0; // next line (if any) starts typing in from scratch
+  if (d.lines.length === 0) {
+    d.active = false;
+    const onDone = d.onDone;
+    d.onDone = null;
     if (onDone) onDone();
   }
+}
+// Runs every tick regardless of app.tutorial.active (unlike stepTutorial(),
+// which only runs during the tutorial) so a real match's opponent dialogue
+// still types in - called from update().
+function stepDialogTypewriter() {
+  const d = app.dialog;
+  if (d.lines.length > 0 && d.revealProgress < d.lines[0].length) {
+    d.revealProgress += 1 / TYPEWRITER_TICKS_PER_CHAR;
+  }
+}
+
+function showTutorialDialog(lines, onDone) {
+  showDialog('COACH', COACH_IMG, lines, onDone);
+}
+function advanceTutorialDialog() {
+  advanceDialog();
 }
 
 // Reached via the Tutorial button on the main menu (the tutorial is
@@ -2530,14 +2583,6 @@ function stepTutorial() {
   // out of nowhere right as the text ends. Wait for it to finish first.
   if (app.callActive) return;
 
-  // Typewriter reveal for whatever line is currently up - runs even while
-  // update() itself is otherwise frozen for the dialogue (stepTutorial()
-  // is called before that freeze check), so the animation actually
-  // progresses instead of never moving.
-  if (t.dialogLines.length > 0 && t.revealProgress < t.dialogLines[0].length) {
-    t.revealProgress += 1 / TYPEWRITER_TICKS_PER_CHAR;
-  }
-
   // Guided pitching intro (see beginPitchPractice()): walks the player
   // through one plain pitch, points out the pitch menu, then one power-up
   // pitch - entirely via the non-blocking caption banner, so gameplay never
@@ -2681,7 +2726,7 @@ function stepTutorial() {
   // one just opened above, or one still being read from an earlier tick).
   // Pitching has no nudge of its own here - the caption banner above already
   // spells out exactly what to press, persistently, for the whole intro.
-  if (t.dialogLines.length > 0) return;
+  if (app.dialog.lines.length > 0) return;
 
   // Batting power drill (bat_easy_power, see beginBattingEasyWithPower()):
   // cpuPitch() won't throw anything at all while this is true, so a player
@@ -2854,22 +2899,23 @@ function drawTutorialArrow(x, y) {
   ctx.restore();
 }
 
-function drawTutorialOverlay() {
-  const t = app.tutorial;
-  drawTutorialCaption();
-  const arrowTarget = tutorialArrowTarget();
-  if (arrowTarget) drawTutorialArrow(arrowTarget.x, arrowTarget.y);
-  if (!t.active || t.dialogLines.length === 0) return;
+// Generic speaker dialogue box (see app.dialog's own comment) - portrait +
+// name + typewriter text, used for both Coach's tutorial lines and solo-mode
+// opponent intro/win/lose lines.
+function drawDialogOverlay() {
+  const d = app.dialog;
+  if (!d.active || d.lines.length === 0) return;
 
   rect(0, 0, CANVAS_W, CANVAS_H, 'black', 0.55);
 
-  const naturalW = COACH_IMG.naturalWidth || 832, naturalH = COACH_IMG.naturalHeight || 1280;
+  const img = d.speakerImg;
+  const naturalW = (img && img.naturalWidth) || 832, naturalH = (img && img.naturalHeight) || 1280;
   const coachH = 420;
   const coachW = coachH * (naturalW / naturalH);
   const coachX = 10;
   const coachY = CANVAS_H - coachH + 30; // feet crop slightly off the bottom edge - reads as "walked into frame"
-  if (COACH_IMG.complete && COACH_IMG.naturalWidth) {
-    ctx.drawImage(COACH_IMG, coachX, coachY, coachW, coachH);
+  if (img && img.complete && img.naturalWidth) {
+    ctx.drawImage(img, coachX, coachY, coachW, coachH);
   }
 
   const textSize = 20, textWeight = 700;
@@ -2880,22 +2926,29 @@ function drawTutorialOverlay() {
   // Wrapped once against the FULL line (not however much is revealed so
   // far) so the panel height and each word's line placement stay fixed for
   // the whole reveal instead of resizing/reflowing as text types in.
-  const wrappedLines = computeWrappedLines(t.dialogLines[0], panelW - 52, textSize, textWeight);
+  const wrappedLines = computeWrappedLines(d.lines[0], panelW - 52, textSize, textWeight);
   const panelH = Math.max(200, textTopPad + wrappedLines.length * lineHeight + bottomPad);
   const panelY = CANVAS_H - panelH - 30;
 
   rect(panelX, panelY, panelW, panelH, 'rgba(20,20,26,0.95)', 1, 'gold', 3);
-  text('COACH', panelX + 26, panelY + 30, 16, 'gold', 1, 'left', 900);
+  text(d.speakerName.toUpperCase(), panelX + 26, panelY + 30, 16, 'gold', 1, 'left', 900);
 
-  const revealCount = Math.floor(t.revealProgress);
+  const revealCount = Math.floor(d.revealProgress);
   wrapTutorialText(wrappedLines, panelX + 26, panelY + textTopPad, textSize, textWeight, revealCount);
 
-  const fullyRevealed = revealCount >= t.dialogLines[0].length;
+  const fullyRevealed = revealCount >= d.lines[0].length;
   text(
     fullyRevealed
       ? (IS_MOBILE ? 'Tap to continue ▶' : 'Click or press any key to continue ▶')
       : (IS_MOBILE ? 'Tap to skip ▶' : 'Click or press any key to skip ▶'),
     panelX + panelW - 24, panelY + panelH - 22, 13, '#cccccc', 0.9, 'right', 600);
+}
+
+function drawTutorialOverlay() {
+  drawTutorialCaption();
+  const arrowTarget = tutorialArrowTarget();
+  if (arrowTarget) drawTutorialArrow(arrowTarget.x, arrowTarget.y);
+  drawDialogOverlay();
 }
 
 /* ============================== INPUT: GAMEPLAY ============================== */
@@ -2926,9 +2979,9 @@ function handleGameplayKey(key, repeat) {
   // reaching pitching/swinging/fire-tune below. Only a genuine keypress
   // advances it - the browser's own auto-repeat while a key is held would
   // otherwise blow through several lines in one held press.
-  if (app.tutorial.active && app.tutorial.dialogLines.length > 0) {
+  if (app.dialog.active && app.dialog.lines.length > 0) {
     if (key === 'escape') { openQuitConfirm(); return; }
-    if (!repeat) advanceTutorialDialog();
+    if (!repeat) advanceDialog();
     return;
   }
   if (key === 'escape') { openQuitConfirm(); return; }
@@ -3139,9 +3192,9 @@ function handlePointerDown(x, y) {
     return;
   }
   if (app.tutorial.active && pointInSkipTutorialButton(x, y)) { finishTutorial(); return; }
-  // Click anywhere to advance Coach's dialogue - matches the "any key"
+  // Click anywhere to advance the dialogue box - matches the "any key"
   // behavior in handleGameplayKey().
-  if (app.tutorial.active && app.tutorial.dialogLines.length > 0) { advanceTutorialDialog(); return; }
+  if (app.dialog.active && app.dialog.lines.length > 0) { advanceDialog(); return; }
   if (IS_MOBILE) { handleMobilePlayTap(x, y); return; }
   // Solo mode (requested): clicking a pitch-menu row (drawPitchMenu()'s W/A/S/D
   // key-hint boxes) throws that pitch, same as pressing the actual key -
@@ -3196,7 +3249,7 @@ canvas.addEventListener('touchstart', e => {
     // should dismiss the dialogue (via handlePointerDown()) instead of
     // silently grabbing an invisible, inert joystick.
     if (app.screen === 'play' && !app.showQuitConfirm && app.activeBatterKey !== 'cpu'
-        && !(app.tutorial.active && app.tutorial.dialogLines.length > 0)
+        && !(app.dialog.active && app.dialog.lines.length > 0)
         && joystick.touchId === null && pointInJoystickZone(x, y)) {
       joystick.touchId = touch.identifier;
       updateJoystickDeflection(x, y);
@@ -5262,9 +5315,12 @@ function update() {
   // hooks and, if a drill objective was just met, opens Coach's next line -
   // see stepTutorial().
   stepTutorial();
-  // Coach's dialogue box freezes the whole scene while it's up, exactly like
-  // the quit-confirm modal above - see drawTutorialOverlay().
-  if (app.tutorial.active && app.tutorial.dialogLines.length > 0) return;
+  // Runs even outside the tutorial (unlike stepTutorial() itself) so a real
+  // match's opponent dialogue still types in - see stepDialogTypewriter().
+  stepDialogTypewriter();
+  // The dialogue box freezes the whole scene while it's up, exactly like
+  // the quit-confirm modal above - see drawDialogOverlay().
+  if (app.dialog.active && app.dialog.lines.length > 0) return;
 
   // Pause's drag animation freezes everything else while it plays out -
   // only advance the animation itself and skip the rest of this tick.
