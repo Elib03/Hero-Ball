@@ -1738,10 +1738,16 @@ function evaluateGameEndUnlocks() {
       unlockCharacter('player', 'scientist');
     }
 
-    // CPU roster advances one slot past whichever CPU character was just beaten.
-    const cpuKey = CHARACTERS[app.cpuBatterIndex].key;
-    const rank = PROGRESSION_ORDER.indexOf(cpuKey);
-    if (rank >= 0 && rank + 1 < PROGRESSION_ORDER.length) unlockCharacter('cpu', PROGRESSION_ORDER[rank + 1]);
+    // CPU roster advances one slot past whichever CPU character was just
+    // beaten - Story mode only (requested). Tournament opponents are a
+    // random draw shown fully unlocked regardless (see drawSoloSelect()'s
+    // isTournament branch) and don't represent real roster progression, so a
+    // tournament win shouldn't also advance the normal Story-mode unlock order.
+    if (app.soloGameMode !== 'tournament') {
+      const cpuKey = CHARACTERS[app.cpuBatterIndex].key;
+      const rank = PROGRESSION_ORDER.indexOf(cpuKey);
+      if (rank >= 0 && rank + 1 < PROGRESSION_ORDER.length) unlockCharacter('cpu', PROGRESSION_ORDER[rank + 1]);
+    }
   }
   persistSaveData();
 }
