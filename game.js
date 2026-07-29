@@ -3848,7 +3848,7 @@ function drawTrophyIcon(cx, cy, size) {
 // A content-locked card still shows the name and both power-up icons as
 // normal (so it reads as a teaser, not a mystery) but silhouettes the
 // portrait art itself and overlays a lock icon + the unlock condition.
-function drawPortraitCard(cx, cy, w, h, charObj, locked, borderColor, contentLocked, conditionText, buyCost) {
+function drawPortraitCard(cx, cy, w, h, charObj, locked, borderColor, contentLocked, conditionText, buyCost, showTrophy) {
   rect(cx - w / 2, cy - h / 2, w, h, 'rgba(255,255,255,0.08)', 1, locked ? (borderColor || 'gold') : null, locked ? 5 : 0);
   const img = portraits[charObj.key];
   if (img.complete && img.naturalWidth) {
@@ -3893,8 +3893,12 @@ function drawPortraitCard(cx, cy, w, h, charObj, locked, borderColor, contentLoc
   // Permanent tournament-championship badge (requested) - the card's
   // top-right corner is clear of every other element (name sits above the
   // box, shoulder icons hug the center, buy/condition text is bottom-
-  // centered) at both desktop and mobile card sizes.
-  if (saveData.tournamentTrophies[charObj.key]) {
+  // centered) at both desktop and mobile card sizes. It's the PLAYER's own
+  // achievement with this character, not the character's in general - the
+  // Opponent/CPU card never shows it even if the random opponent happens to
+  // be a character the player has already won a tournament with elsewhere
+  // (showTrophy defaults true; only the CPU card call sites pass false).
+  if (showTrophy !== false && saveData.tournamentTrophies[charObj.key]) {
     drawTrophyIcon(cx + w / 2 - w * 0.12, cy - h / 2 + h * 0.09, Math.min(w, h) * 0.22);
   }
 }
@@ -3979,7 +3983,7 @@ function drawMobileCpuSelect() {
   // progression - always shown fully revealed (see drawSoloSelect()'s own
   // comment on the desktop equivalent of this).
   drawPortraitCard(CANVAS_W / 2, toY(190), lenX(150), toLen(220), cpu, false, cpu.color,
-    isTournament ? false : !isCpuUnlocked(cpu.key), isTournament ? null : cpuUnlockConditionText(cpu.key));
+    isTournament ? false : !isCpuUnlocked(cpu.key), isTournament ? null : cpuUnlockConditionText(cpu.key), null, false);
 
   drawBackButton();
 
@@ -4032,7 +4036,7 @@ function drawSoloSelect() {
   // progression - always shown fully revealed, never the silhouette/lock
   // treatment isCpuUnlocked() would otherwise apply.
   drawPortraitCard(toX(300), toY(200), lenX(150), toLen(220), cpu, app.cpuLocked, cpu.color,
-    isTournament ? false : !isCpuUnlocked(cpu.key), isTournament ? null : cpuUnlockConditionText(cpu.key));
+    isTournament ? false : !isCpuUnlocked(cpu.key), isTournament ? null : cpuUnlockConditionText(cpu.key), null, false);
 
   drawBackButton();
   text('Coins: ' + saveData.coins, CANVAS_W / 2, toY(UPGRADES_BUTTON.y - 12), 15, 'gold', 1, 'center', 700);
@@ -4821,7 +4825,11 @@ function drawGameOver() {
 
   text('GAME OVER', CANVAS_W / 2, CANVAS_H / 2 - 90, 46, 'white', 1, 'center', 900);
   text(app.gameOverP1Wins ? 'P1 WINS!' : (app.mode === 'solo' ? 'CPU WINS!' : 'P2 WINS!'), CANVAS_W / 2, CANVAS_H / 2 - 30, 30, 'gold', 1, 'center', 900);
-  if (app.mode === 'solo' && app.gameOverP1Wins) {
+  // A reward was actually granted (see evaluateGameEndUnlocks()) whenever
+  // this is > 0 - true for every Story win, and for Tournament mode only
+  // once the run itself ends (eliminated, or champion), never for a
+  // mid-run round win that just advances to the next round.
+  if (app.mode === 'solo' && app.lastCoinsEarned > 0) {
     text('+' + app.lastCoinsEarned + ' Coins', CANVAS_W / 2, CANVAS_H / 2 + 10, 22, 'gold', 1, 'center', 700);
   }
 
