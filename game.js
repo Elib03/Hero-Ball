@@ -2845,8 +2845,23 @@ function beginBattingEasyWithPower() {
     : 'Press M to use your power-up, then swing when the pitch comes in!';
 }
 
+// Ending the tutorial (naturally or via the Skip Tutorial button) used to
+// dump the player back at the main mode-select menu - Solo/Tournament-or-
+// Story/character-select/opponent-select all still stood between "just
+// learned how to play" and an actual match, which is exactly where Poki's
+// retention dashboard shows new players dropping off. Straight into a real
+// Story-mode match instead (requested) - same default Antman-vs-Antman
+// pairing a fresh Solo pick already lands on (see randomizeCharacterCursor()),
+// so this isn't inventing a new matchup, just skipping the menus to reach it.
 function finishTutorial() {
-  quitToModeSelect();
+  app.showQuitConfirm = false;
+  resetMatchState();
+  app.mode = 'solo';
+  app.soloGameMode = 'story';
+  randomizeCharacterCursor('solo');
+  app.player1Locked = true;
+  app.cpuLocked = true;
+  beginGame();
 }
 
 // Checked once per tick from update(): watches for the flags the hooks
