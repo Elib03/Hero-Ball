@@ -2193,7 +2193,7 @@ window.addEventListener('keyup', () => {});
 // the one character guaranteed unlocked on both rosters from the start, so
 // a brand-new player never lands on a locked (silhouetted) card by default.
 // Bug fix: the CPU cursor used to just carry over whatever it was last set
-// to - including a leftover 'bruiser' from startTutorial() (which sets
+// to - including a leftover value from startTutorial() (which sets
 // app.cpuBatterIndex for its own scripted opponent), since the tutorial
 // runs automatically on page load before the player ever reaches this
 // screen for real. Explicitly resetting it here every time Solo is entered
@@ -2734,18 +2734,20 @@ function startTutorial() {
   // exact power-ups (Ball Shrink pitch, Expand Shot bat) they'll actually
   // have available the first time they play for real.
   app.player1Index = CHARACTERS.findIndex(c => c.key === 'antman');
-  // Bruiser - looked up by key rather than a raw index, so this can't
-  // silently start pointing at a different character if CHARACTERS' order
-  // ever changes again (it already did once, for the progression system).
-  app.cpuBatterIndex = CHARACTERS.findIndex(c => c.key === 'bruiser');
+  // Antman (requested) - looked up by key rather than a raw index, so this
+  // can't silently start pointing at a different character if CHARACTERS'
+  // order ever changes again (it already did once, for the progression
+  // system). Same character as the player's own tutorial pick - matches
+  // rank 0/Easy either way, so this isn't a difficulty change.
+  app.cpuBatterIndex = CHARACTERS.findIndex(c => c.key === 'antman');
   resetMatchState(); // also zeroes out every app.tutorial field - re-armed right below
   app.tutorial.active = true;
   // Real match setup (screen='play', homePitching=true, difficulty derived
-  // from Bruiser's rank - already Easy, sprite warm, resetBall(), crowd
+  // from Antman's rank - already Easy, sprite warm, resetBall(), crowd
   // sound). homePitching=true gives the human the BATTER role first (see
   // assignActiveRoles()'s own comment) - batting first matches solo's real
   // top-of-1st order, unlike the old pitching-first tutorial. This also
-  // queues Bruiser's own opponent-intro line via showDialog() - immediately
+  // queues Antman's own opponent-intro line via showDialog() - immediately
   // overwritten by Coach's greeting below before it's ever shown, so nothing
   // stacks two dialogues in a row at the very start.
   startMatch();
