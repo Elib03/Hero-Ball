@@ -3328,11 +3328,18 @@ function tutorialArrowTarget() {
     return null;
   }
   if (t.practiceStep === 'bat_aim_demo') {
-    if (!IS_MOBILE) return null; // desktop aims/swings with the mouse directly - no fixed button to point at
+    // Points at the frozen ball itself (requested) - on both platforms now.
+    // Previously mobile pointed at the joystick instead (a control to use)
+    // and desktop showed nothing at all - but the ball's own position on
+    // screen is the actual thing a player needs to notice first, not just
+    // "here's a control." Once they've actually found it (on target), the
+    // crosshair already marks that same spot, so pointing at the ball again
+    // would be redundant - mobile switches to the swing button instead;
+    // desktop still has nothing to point at there (click works anywhere).
     if (t.aimDemoFrozen && !t.aimDemoOnTarget) {
-      return { x: toX(JOYSTICK_BASE.x), y: toY(JOYSTICK_BASE.y) };
+      return { x: ball.x, y: ball.y };
     }
-    if (t.aimDemoFrozen && t.aimDemoOnTarget) {
+    if (IS_MOBILE && t.aimDemoFrozen && t.aimDemoOnTarget) {
       return { x: toX(SWING_BUTTON.x) + toLen(SWING_BUTTON.size) / 2, y: toY(SWING_BUTTON.y) + toLen(SWING_BUTTON.size) / 2 };
     }
     return null;
