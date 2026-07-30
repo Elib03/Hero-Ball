@@ -4886,27 +4886,31 @@ function drawCrosshair() {
   }
 }
 
-// A small "Click To Swing" label - only meaningful for a human-controlled
-// batter, so that's the only thing gating it. Stays up through the swing
-// animation too, same as the crosshair.
-// Bug fix (requested, per session recordings): this used to sit at a fixed
-// spot near the batter's stance, styled as a solid dark box - close enough
-// to a real button that a lot of players moved their mouse TO it and
-// clicked there instead of at the ball. On this control scheme a click just
-// triggers the swing wherever the crosshair (which follows the mouse)
-// already is - clicking on the fixed label dragged the crosshair away from
-// the ball right before swinging, turning "click to swing" into a guaranteed
-// miss. Anchored to the crosshair's own current position instead, with a
-// much softer background - wherever a player is aiming already IS the right
-// place to click, so this can no longer mislead them into aiming at it.
+// A small "Click To Swing" label under the batter, sitting halfway up the
+// grass strip (grass runs y 300-400, see drawField()) - only meaningful for
+// a human-controlled batter, so that's the only thing gating it. Stays up
+// through the swing animation too, same as the crosshair.
+// Bug fix (requested, per session recordings): used to be styled as a solid
+// dark box - close enough to a real button that a lot of players moved
+// their mouse TO it and clicked there instead of at the ball, dragging the
+// crosshair (which follows the mouse) away from their actual target right
+// before swinging. Briefly tried anchoring it to the crosshair itself
+// instead, but a label that follows your mouse around turned out to be its
+// own kind of distracting - back to this fixed spot, just with the
+// softer (no border, lower-opacity) background so it doesn't read as
+// something to click on.
 function drawSwingHint() {
   if (app.activeBatterKey === 'cpu') return;
   if (IS_MOBILE) return; // the on-screen Swing button (drawMobileControls) replaces this hint
 
+  // Bug fix (requested): following the crosshair made this distracting -
+  // back to a fixed spot near the batter, still with the softer (no border,
+  // lower-opacity) background from the earlier fix so it doesn't read as a
+  // button players should aim their mouse at and click.
   const label = 'Click To Swing';
   const size = 13;
-  const cx = crosshairX;
-  const cy = crosshairY - crosshairRadius - toLen(16);
+  const cx = toX(BATTER_READY_META.x) + toLen(25);
+  const cy = toY(350);
   const w = textWidth(label, size, 700) + lenX(16);
   const h = toLen(20);
   rect(cx - w / 2, cy - h / 2, w, h, 'rgba(0,0,0,0.3)', 1);
