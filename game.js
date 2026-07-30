@@ -1538,7 +1538,25 @@ function scoreRun() {
     // Rally difficulty (requested): every 7 runs the human scores in a
     // single half-inning at bat, cpuPitch() bumps its pitch tier up by one
     // (capped at Hard) for the rest of that half - see its own comment.
-    if (!battingTeamIsHome()) app.runsThisHalfInning++;
+    if (!battingTeamIsHome()) {
+      app.runsThisHalfInning++;
+      // Rally difficulty applies to baby mode too (requested): scoring 7
+      // runs in a half-inning while still in baby mode graduates it into a
+      // normal Easy-tier game, permanently (even for a later inning) -
+      // "and so on like normal" from there means the existing rally-
+      // difficulty step above should then apply exactly as it always does
+      // for a non-baby-mode game: another 7 runs bumps to Normal, another 7
+      // to Hard, capped. Subtracting the 7 runs "spent" graduating resets
+      // this half-inning's own counter to 0 so that formula sees a fresh
+      // Easy-tier start instead of counting them a second time (which would
+      // jump straight to Normal instead of landing on Easy first).
+      if (!saveData.babyModeDone && app.runsThisHalfInning >= 7) {
+        saveData.babyModeDone = true;
+        persistSaveData();
+        app.difficultyIndex = 0; // Easy - the CPU is always Antman (rank 0) during a baby-mode-eligible first game anyway, but make it explicit
+        app.runsThisHalfInning -= 7;
+      }
+    }
   }
 }
 
