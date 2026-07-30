@@ -4886,37 +4886,6 @@ function drawCrosshair() {
   }
 }
 
-// A small "Click To Swing" label under the batter, sitting halfway up the
-// grass strip (grass runs y 300-400, see drawField()) - only meaningful for
-// a human-controlled batter, so that's the only thing gating it. Stays up
-// through the swing animation too, same as the crosshair.
-// Bug fix (requested, per session recordings): used to be styled as a solid
-// dark box - close enough to a real button that a lot of players moved
-// their mouse TO it and clicked there instead of at the ball, dragging the
-// crosshair (which follows the mouse) away from their actual target right
-// before swinging. Briefly tried anchoring it to the crosshair itself
-// instead, but a label that follows your mouse around turned out to be its
-// own kind of distracting - back to this fixed spot, just with the
-// softer (no border, lower-opacity) background so it doesn't read as
-// something to click on.
-function drawSwingHint() {
-  if (app.activeBatterKey === 'cpu') return;
-  if (IS_MOBILE) return; // the on-screen Swing button (drawMobileControls) replaces this hint
-
-  // Bug fix (requested): following the crosshair made this distracting -
-  // back to a fixed spot near the batter, still with the softer (no border,
-  // lower-opacity) background from the earlier fix so it doesn't read as a
-  // button players should aim their mouse at and click.
-  const label = 'Click To Swing';
-  const size = 13;
-  const cx = toX(BATTER_READY_META.x) + toLen(25);
-  const cy = toY(350);
-  const w = textWidth(label, size, 700) + lenX(16);
-  const h = toLen(20);
-  rect(cx - w / 2, cy - h / 2, w, h, 'rgba(0,0,0,0.3)', 1);
-  text(label, cx, cy, size, 'white', 0.8, 'center', 700);
-}
-
 function drawCallBanner() {
   if (!app.callActive) return;
   rect(0, toY(125), CANVAS_W, toLen(100), 'black', app.callBannerOpacity);
@@ -5097,7 +5066,6 @@ function drawGameplay() {
   drawGhostBalls(); // ghosts render ON TOP of the real ball so they can disguise it
   drawDiceGame();
   drawCrosshair();
-  drawSwingHint();
   drawCallBanner();
   drawPauseAnim();
   if (IS_MOBILE) drawMobileControls();
