@@ -1078,7 +1078,14 @@ const app = {
     // freezes update() (and therefore the crosshair) entirely.
     awaitingAimFreeze: false, // true from the moment the demo pitch launches until it crosses the freeze point
     aimDemoFrozen: false, // true once the ball has actually stopped mid-flight
-    aimDemoOnTarget: false, // true once the crosshair has been detected on top of the frozen ball
+    // Bug fix (requested): this used to latch true forever once the
+    // crosshair first reached the ball, so a player who then drifted back
+    // off it kept seeing "Now click to swing!" - actively misleading, since
+    // swinging there would just miss. Now re-checked live every tick (see
+    // stepTutorial()) and only stays permanently true once the stuck-player
+    // fallback below force-passes it.
+    aimDemoOnTarget: false, // true only while the crosshair is CURRENTLY on top of the frozen ball (or the stuck-player fallback fired)
+    aimDemoForcedOnTarget: false, // true once the 30s stuck-player fallback has force-passed this step - aimDemoOnTarget then stays true regardless of position
     aimDemoSwung: false, // set by attemptSwing() once the player swings while on-target
     aimDemoTicks: 0, // ticks spent frozen-and-not-yet-on-target - drives the stuck-player nudge/auto-advance below
     aimDemoHintShown: false,
@@ -2439,6 +2446,7 @@ function resetMatchState() {
   app.tutorial.awaitingAimFreeze = false;
   app.tutorial.aimDemoFrozen = false;
   app.tutorial.aimDemoOnTarget = false;
+  app.tutorial.aimDemoForcedOnTarget = false;
   app.tutorial.aimDemoSwung = false;
   app.tutorial.captionText = '';
   app.tutorial.pitchIntroPhase = null;
@@ -2866,6 +2874,7 @@ function beginBattingAimDemo() {
   app.tutorial.awaitingAimFreeze = true;
   app.tutorial.aimDemoFrozen = false;
   app.tutorial.aimDemoOnTarget = false;
+  app.tutorial.aimDemoForcedOnTarget = false;
   app.tutorial.aimDemoSwung = false;
   app.tutorial.aimDemoTicks = 0;
   app.tutorial.aimDemoHintShown = false;
@@ -3069,12 +3078,26 @@ function stepTutorial() {
   // Batting aim demo: the ball is frozen mid-flight (see the update() hook
   // near AIM_DEMO_FREEZE_X) while this runs every tick regardless of the
   // dialogue-freeze state below, since the crosshair needs to keep moving.
-  if (t.aimDemoFrozen && !t.aimDemoOnTarget) {
-    if (dist(crosshairX, crosshairY, ball.x, ball.y) <= crosshairRadius) {
+  if (t.aimDemoFrozen && !t.aimDemoForcedOnTarget) {
+    const onTargetNow = dist(crosshairX, crosshairY, ball.x, ball.y) <= crosshairRadius;
+    if (onTargetNow && !t.aimDemoOnTarget) {
+      // Just moved onto the ball.
       t.aimDemoOnTarget = true;
       t.aimDemoTicks = 0;
       t.captionText = IS_MOBILE ? 'Perfect! Now tap SWING!' : 'Perfect! Now click to swing!';
-    } else {
+    } else if (!onTargetNow && t.aimDemoOnTarget) {
+      // Bug fix (requested): drifted back off the ball after lining up -
+      // leaving the "click to swing" caption up here was actively
+      // misleading (swinging now would just miss). Go back to telling them
+      // to re-aim instead. They've already shown they understand the
+      // mechanic once, so skip the patient 10s delay the first attempt
+      // gets below - remind them immediately.
+      t.aimDemoOnTarget = false;
+      t.aimDemoHintShown = true;
+      t.captionText = IS_MOBILE
+        ? 'Move the joystick so your circle lands right on the ball.'
+        : 'Move your mouse so your circle lands right on the ball.';
+    } else if (!onTargetNow) {
       t.aimDemoTicks++;
       if (t.aimDemoTicks === 400 && !t.aimDemoHintShown) { // ~10s at 40 ticks/sec
         t.aimDemoHintShown = true;
@@ -3082,6 +3105,7 @@ function stepTutorial() {
           ? 'Move the joystick so your circle lands right on the ball.'
           : 'Move your mouse so your circle lands right on the ball.';
       } else if (t.aimDemoTicks >= 1200) { // ~30s total - never leave a stuck player blocked forever
+        t.aimDemoForcedOnTarget = true;
         t.aimDemoOnTarget = true;
         t.captionText = IS_MOBILE ? 'Now tap SWING!' : 'Now click to swing!';
       }
@@ -4862,22 +4886,31 @@ function drawCrosshair() {
   }
 }
 
-// A small "Click To Swing" label under the batter, sitting halfway up the
-// grass strip (grass runs y 300-400, see drawField()) - only meaningful for
-// a human-controlled batter, so that's the only thing gating it. Stays up
-// through the swing animation too, same as the crosshair.
+// A small "Click To Swing" label - only meaningful for a human-controlled
+// batter, so that's the only thing gating it. Stays up through the swing
+// animation too, same as the crosshair.
+// Bug fix (requested, per session recordings): this used to sit at a fixed
+// spot near the batter's stance, styled as a solid dark box - close enough
+// to a real button that a lot of players moved their mouse TO it and
+// clicked there instead of at the ball. On this control scheme a click just
+// triggers the swing wherever the crosshair (which follows the mouse)
+// already is - clicking on the fixed label dragged the crosshair away from
+// the ball right before swinging, turning "click to swing" into a guaranteed
+// miss. Anchored to the crosshair's own current position instead, with a
+// much softer background - wherever a player is aiming already IS the right
+// place to click, so this can no longer mislead them into aiming at it.
 function drawSwingHint() {
   if (app.activeBatterKey === 'cpu') return;
   if (IS_MOBILE) return; // the on-screen Swing button (drawMobileControls) replaces this hint
 
   const label = 'Click To Swing';
   const size = 13;
-  const cx = toX(BATTER_READY_META.x) + toLen(25);
-  const cy = toY(350);
+  const cx = crosshairX;
+  const cy = crosshairY - crosshairRadius - toLen(16);
   const w = textWidth(label, size, 700) + lenX(16);
   const h = toLen(20);
-  rect(cx - w / 2, cy - h / 2, w, h, 'black', 0.55);
-  text(label, cx, cy, size, 'white', 0.9, 'center', 700);
+  rect(cx - w / 2, cy - h / 2, w, h, 'rgba(0,0,0,0.3)', 1);
+  text(label, cx, cy, size, 'white', 0.8, 'center', 700);
 }
 
 function drawCallBanner() {
