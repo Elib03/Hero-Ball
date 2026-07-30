@@ -2975,8 +2975,8 @@ function awaitPitchingTurn() {
   app.tutorial.captionText = '';
 }
 
-// Ending the tutorial (naturally, via the Skip Tutorial button, or the
-// pitching drill's own stuck-player fallback) used to dump the player back
+// Ending the tutorial (naturally, or via the batting drills' stuck-player
+// fallback - see stepTutorial()) used to dump the player back
 // at the main mode-select menu, or (before that) discard a whole separate
 // practice match and start a fresh one - either way, real playtime was being
 // thrown away right where Poki's retention dashboard shows new players
@@ -3680,7 +3680,6 @@ function handlePointerDown(x, y) {
     else if (pointInQuitNoButton(x, y)) closeQuitConfirmAndResume();
     return;
   }
-  if (app.tutorial.active && pointInSkipTutorialButton(x, y)) { finishTutorial(); return; }
   // Click anywhere to advance the dialogue box - matches the "any key"
   // behavior in handleGameplayKey().
   if (app.dialog.active && app.dialog.lines.length > 0) { advanceDialog(); return; }
@@ -3885,32 +3884,6 @@ function pointInPlayButton(x, y) {
 function pointInMobileTutorialButton(x, y) {
   const b = MOBILE_TUTORIAL_BUTTON;
   return x >= toX(b.x) && x <= toX(b.x) + lenX(b.w) && y >= toY(b.y) && y <= toY(b.y) + toLen(b.h);
-}
-
-// Top-right escape hatch, visible for the tutorial's entire duration (see
-// drawGameplay()/handlePointerDown()) - one click bails straight out via
-// finishTutorial(), no confirmation needed (Escape's quit-confirm is for
-// leaving a REAL match mid-play, a more deliberate action than backing out
-// of onboarding). Sized to the actual text (not a guessed constant) so it
-// can't end up too cramped the way GAME_OVER_BTN once was. y:90 (not the
-// very top) matches BACK_BUTTON_INGAME's row - the scoreboard occupies
-// nearly the entire top strip (toX(5) to toX(395), toY(8) to toY(83)) once
-// gameplay is actually showing, unlike the old menu screen this button used
-// to live on.
-const SKIP_TUTORIAL_TEXT_SIZE = 15;
-const SKIP_TUTORIAL_BTN_H = 32;
-function skipTutorialButtonRect() {
-  const w = textWidth('Skip Tutorial', SKIP_TUTORIAL_TEXT_SIZE, 700) + lenX(20);
-  return { bx: toX(390) - w, by: toY(90), bw: w, bh: toLen(SKIP_TUTORIAL_BTN_H) };
-}
-function pointInSkipTutorialButton(x, y) {
-  const { bx, by, bw, bh } = skipTutorialButtonRect();
-  return x >= bx && x <= bx + bw && y >= by && y <= by + bh;
-}
-function drawSkipTutorialButton() {
-  const { bx, by, bw, bh } = skipTutorialButtonRect();
-  rect(bx, by, bw, bh, 'rgba(0,0,0,0.5)', 1, 'white', 2);
-  text('Skip Tutorial', bx + bw / 2, by + bh / 2, SKIP_TUTORIAL_TEXT_SIZE, 'white', 1, 'center', 700);
 }
 
 // Sized wider than the mode-select buttons below (200 vs 150) to comfortably
@@ -5089,10 +5062,6 @@ function drawGameplay() {
   drawPauseAnim();
   if (IS_MOBILE) drawMobileControls();
   drawTutorialOverlay(); // Coach's dialogue box, dims the scene while a line is up
-  // Stays up for the tutorial's entire duration, not just while Coach is
-  // talking - hidden under the quit-confirm modal (that one's already its
-  // own, more deliberate way out).
-  if (app.tutorial.active && !app.showQuitConfirm) drawSkipTutorialButton();
   drawQuitConfirm(); // on top of absolutely everything, including Pause's own freeze overlay and Coach
 }
 
