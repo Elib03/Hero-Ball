@@ -271,8 +271,9 @@ function defaultSaveData() {
     // Baby mode (requested): a brand-new player's very first game gets a
     // much slower, near-straight version of every pitch (see cpuPitch()'s
     // babySet) instead of normal CPU pitching, so early batting struggles
-    // don't compound with everything else that's new. Ends permanently the
-    // moment either trigger fires - see scoreRun()/switchSides().
+    // don't compound with everything else that's new. Covers the whole
+    // first game unconditionally, ending permanently once it's over - see
+    // evaluateGameEndUnlocks().
     babyModeDone: false,
     stats: {
       everHitHomeRun: false,
@@ -1537,15 +1538,7 @@ function scoreRun() {
     // Rally difficulty (requested): every 7 runs the human scores in a
     // single half-inning at bat, cpuPitch() bumps its pitch tier up by one
     // (capped at Hard) for the rest of that half - see its own comment.
-    if (!battingTeamIsHome()) {
-      app.runsThisHalfInning++;
-      // Baby mode (requested) ends the moment the human scores their first
-      // run - see cpuPitch()'s babySet/defaultSaveData()'s own comment.
-      if (!saveData.babyModeDone) {
-        saveData.babyModeDone = true;
-        persistSaveData();
-      }
-    }
+    if (!battingTeamIsHome()) app.runsThisHalfInning++;
   }
 }
 
@@ -1753,9 +1746,11 @@ function evaluateGameEndUnlocks() {
   // Reset every call (not just inside the win branch below) so a loss never
   // leaves a stale amount from an earlier win showing on drawGameOver().
   app.lastCoinsEarned = 0;
-  // Baby mode (requested) ends the moment the first game is over, win or
-  // lose, even if the human never scored - see cpuPitch()'s babySet/
-  // scoreRun()'s own trigger for the other way it can end.
+  // Baby mode (requested) ends once the first game is over, win or lose -
+  // it used to also end early the moment the human scored their first run,
+  // but that meant batting could suddenly get harder again right when a
+  // struggling player was finally feeling good about it. Now it covers the
+  // whole first game unconditionally - see cpuPitch()'s babySet.
   if (!saveData.babyModeDone) {
     saveData.babyModeDone = true;
     persistSaveData();
@@ -2166,14 +2161,13 @@ function cpuPitch() {
     app.isPitching = true;
     return;
   }
-  // Baby mode (requested): a brand-new player's very first game (until they
-  // score their first run or the game ends - see scoreRun()/switchSides())
-  // gets the same 4 pitch types but a much slower, near-straight version of
-  // each (see applyPitchVelocity()'s babySet table) instead of the CPU's
-  // normal difficulty-tiered pitching - and skips the CPU's own power-up
-  // roll entirely, since a power pitch (Ghost/Meteor/Void/...) would undo
-  // the whole point by throwing something far less predictable than even a
-  // Hard-tier plain pitch.
+  // Baby mode (requested): a brand-new player's whole first game (see
+  // evaluateGameEndUnlocks()) gets the same 4 pitch types but a much
+  // slower, near-straight version of each (see applyPitchVelocity()'s
+  // babySet table) instead of the CPU's normal difficulty-tiered pitching -
+  // and skips the CPU's own power-up roll entirely, since a power pitch
+  // (Ghost/Meteor/Void/...) would undo the whole point by throwing
+  // something far less predictable than even a Hard-tier plain pitch.
   if (app.mode === 'solo' && !saveData.babyModeDone) {
     const babySet = ['BFastball', 'BCurveball', 'BKnuckleball', 'BRiser'];
     app.pitch = babySet[randRange(0, babySet.length)];
