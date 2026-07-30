@@ -1431,26 +1431,27 @@ function applyPitchVelocity(pitchName) {
     EFastball: [10, 3], ECurveball: [9, 4, -0.32], EKnuckleball: [8, 0, 0], ERiser: [8, -4, 0.185],
     HFastball: [15, 1.2], HCurveball: [12, 7, -0.68], HKnuckleball: [12, 0, 0], HRiser: [12, -3.6, 0.164],
     FastballPlus: [30, -1.3],
-    // Baby mode (requested) - even slower than the E tier (xSpeed 6, vs. 8-10)
-    // with movement pared down to near nothing on every type, including
-    // Curveball tuned to actually land as a strike here (unlike every other
-    // Curveball tier) rather than arc out as a Ball - a first-time player
-    // should always get a real, reachable pitch to swing at. Knuckleball's
-    // chaos phase is driven separately by update()'s exact-name check
-    // (Knuckleball/EKnuckleball/HKnuckleball only), so BKnuckleball never
-    // enters it and just flies a plain, predictable line like the others.
+    // Baby mode (requested) - a very slow pitch, well under even the E tier
+    // (xSpeed 3, vs. 8-10) with movement pared down to near nothing on every
+    // type, including Curveball tuned to actually land as a strike here
+    // (unlike every other Curveball tier) rather than arc out as a Ball - a
+    // first-time player should always get a real, reachable pitch to swing
+    // at. Knuckleball's chaos phase is driven separately by update()'s
+    // exact-name check (Knuckleball/EKnuckleball/HKnuckleball only), so
+    // BKnuckleball never enters it and just flies a plain, predictable line
+    // like the others.
     // Bug fix: naively copying the other tiers' ySpeed0/accel (scaled down
-    // for the slower xSpeed) badly overshot the zone - at 6 xSpeed the ball
-    // takes ~49 ticks to reach the plate, 2-3x any other tier, so the exact
-    // same per-tick ySpeed0/accel compounds into a wildly different arrival
-    // height than intended - solved (not guessed) against update()'s real
-    // per-tick step (`ySpeed -= accel`, note the SUBTRACTION - the opposite
-    // sign convention from what the flight-time math naively suggests) to
-    // land dead center in the zone at that specific 49-tick flight time -
-    // Fastball/Knuckleball perfectly flat (accel 0), Curveball/Riser a
-    // barely-visible opposite-direction curve, all four still landing
-    // centered as a real, reachable pitch every time.
-    BFastball: [6, -0.561, 0], BCurveball: [6, -1.281, 0.03], BKnuckleball: [6, -0.561, 0], BRiser: [6, 0.159, -0.03],
+    // for the slower xSpeed) badly overshot the zone - at this xSpeed the
+    // ball takes ~98 ticks to reach the plate, 5-6x any other tier, so the
+    // exact same per-tick ySpeed0/accel compounds into a wildly different
+    // arrival height than intended - solved (not guessed) against update()'s
+    // real per-tick step (`ySpeed -= accel`, note the SUBTRACTION - the
+    // opposite sign convention from what the flight-time math naively
+    // suggests) to land dead center in the zone at that specific 98-tick
+    // flight time - Fastball/Knuckleball perfectly flat (accel 0), Curveball/
+    // Riser a barely-visible opposite-direction curve, all four still
+    // landing centered as a real, reachable pitch every time.
+    BFastball: [3, -0.281, 0], BCurveball: [3, -1.736, 0.03], BKnuckleball: [3, -0.281, 0], BRiser: [3, 1.174, -0.03],
   };
   if (table[pitchName]) {
     ball.xSpeed = lenX(table[pitchName][0]);
