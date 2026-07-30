@@ -1431,27 +1431,26 @@ function applyPitchVelocity(pitchName) {
     EFastball: [10, 3], ECurveball: [9, 4, -0.32], EKnuckleball: [8, 0, 0], ERiser: [8, -4, 0.185],
     HFastball: [15, 1.2], HCurveball: [12, 7, -0.68], HKnuckleball: [12, 0, 0], HRiser: [12, -3.6, 0.164],
     FastballPlus: [30, -1.3],
-    // Baby mode (requested) - a very slow pitch, well under even the E tier
-    // (xSpeed 3, vs. 8-10) with movement pared down to near nothing on every
-    // type, including Curveball tuned to actually land as a strike here
-    // (unlike every other Curveball tier) rather than arc out as a Ball - a
-    // first-time player should always get a real, reachable pitch to swing
-    // at. Knuckleball's chaos phase is driven separately by update()'s
-    // exact-name check (Knuckleball/EKnuckleball/HKnuckleball only), so
-    // BKnuckleball never enters it and just flies a plain, predictable line
-    // like the others.
+    // Baby mode (requested) - even slower than the E tier (xSpeed 6, vs. 8-10)
+    // with movement pared down to near nothing on every type, including
+    // Curveball tuned to actually land as a strike here (unlike every other
+    // Curveball tier) rather than arc out as a Ball - a first-time player
+    // should always get a real, reachable pitch to swing at. Knuckleball's
+    // chaos phase is driven separately by update()'s exact-name check
+    // (Knuckleball/EKnuckleball/HKnuckleball only), so BKnuckleball never
+    // enters it and just flies a plain, predictable line like the others.
     // Bug fix: naively copying the other tiers' ySpeed0/accel (scaled down
-    // for the slower xSpeed) badly overshot the zone - at this xSpeed the
-    // ball takes ~98 ticks to reach the plate, 5-6x any other tier, so the
-    // exact same per-tick ySpeed0/accel compounds into a wildly different
-    // arrival height than intended - solved (not guessed) against update()'s
-    // real per-tick step (`ySpeed -= accel`, note the SUBTRACTION - the
-    // opposite sign convention from what the flight-time math naively
-    // suggests) to land dead center in the zone at that specific 98-tick
-    // flight time - Fastball/Knuckleball perfectly flat (accel 0), Curveball/
-    // Riser a barely-visible opposite-direction curve, all four still
-    // landing centered as a real, reachable pitch every time.
-    BFastball: [3, -0.281, 0], BCurveball: [3, -1.736, 0.03], BKnuckleball: [3, -0.281, 0], BRiser: [3, 1.174, -0.03],
+    // for the slower xSpeed) badly overshot the zone - at 6 xSpeed the ball
+    // takes ~49 ticks to reach the plate, 2-3x any other tier, so the exact
+    // same per-tick ySpeed0/accel compounds into a wildly different arrival
+    // height than intended - solved (not guessed) against update()'s real
+    // per-tick step (`ySpeed -= accel`, note the SUBTRACTION - the opposite
+    // sign convention from what the flight-time math naively suggests) to
+    // land dead center in the zone at that specific 49-tick flight time -
+    // Fastball/Knuckleball perfectly flat (accel 0), Curveball/Riser a
+    // barely-visible opposite-direction curve, all four still landing
+    // centered as a real, reachable pitch every time.
+    BFastball: [6, -0.561, 0], BCurveball: [6, -1.281, 0.03], BKnuckleball: [6, -0.561, 0], BRiser: [6, 0.159, -0.03],
   };
   if (table[pitchName]) {
     ball.xSpeed = lenX(table[pitchName][0]);
@@ -2857,7 +2856,13 @@ function beginBattingAimDemo() {
   resetBall();
 
   app.tutorial.practiceStep = 'bat_aim_demo';
-  app.tutorial.forcedPitch = 'EFastball'; // slow and dead straight - see beginBattingEasy()'s own note on why not Knuckleball
+  // Baby mode (requested) applies here too - the tutorial only ever runs
+  // for a player whose first game isn't over yet, so babyModeDone is
+  // normally still false, but a returning player replaying the tutorial
+  // from the menu after it's already ended gets the normal E-tier pitch
+  // instead. Slow and dead straight either way - see beginBattingEasy()'s
+  // own note on why not Knuckleball.
+  app.tutorial.forcedPitch = saveData.babyModeDone ? 'EFastball' : 'BFastball';
   app.tutorial.awaitingAimFreeze = true;
   app.tutorial.aimDemoFrozen = false;
   app.tutorial.aimDemoOnTarget = false;
@@ -2884,9 +2889,12 @@ function beginBattingEasy() {
   // Bug fix: Knuckleball isn't actually a straight line - it's genuinely
   // chaotic, randomly bouncing up/down most of the way to the plate before
   // correcting into the zone (see the chaos-phase step logic gated on
-  // KNUCKLE_CHAOS_END_X). EFastball is a real straight, slow, predictable
-  // pitch - the "really easy, straight line" starter this drill promises.
-  app.tutorial.forcedPitch = 'EFastball';
+  // KNUCKLE_CHAOS_END_X). EFastball/BFastball are real straight, predictable
+  // pitches - the "really easy, straight line" starter this drill promises.
+  // Baby mode (requested) applies here too - see beginBattingAimDemo()'s
+  // own comment on when it wouldn't (a replayed tutorial after baby mode's
+  // already ended).
+  app.tutorial.forcedPitch = saveData.babyModeDone ? 'EFastball' : 'BFastball';
   app.tutorial.awaitingContact = true;
   app.tutorial.battingMissCount = 0;
   app.tutorial.battingHintShown = false;
@@ -2907,7 +2915,7 @@ function beginBattingEasyWithPower() {
   resetBall();
 
   app.tutorial.practiceStep = 'bat_easy_power';
-  // Riser, not another EFastball (requested): once guidance ends, the rest
+  // Riser, not another Fastball (requested): once guidance ends, the rest
   // of this same at-bat's pitches are real and unguided - the player's
   // first-ever look at a moving pitch shouldn't also be their first
   // unguided one, which is a rough way to meet a strikeout. Riser is the
@@ -2915,8 +2923,10 @@ function beginBattingEasyWithPower() {
   // applyPitchVelocity()'s own comment), but unlike Curveball it's still a
   // guaranteed strike (lands back inside the zone), so this drill can't
   // itself become an unfair miss - and unlike Knuckleball it isn't chaotic,
-  // just a smooth, learnable dip-then-rise arc.
-  app.tutorial.forcedPitch = 'ERiser';
+  // just a smooth, learnable dip-then-rise arc. Baby mode (requested)
+  // applies here too - see beginBattingAimDemo()'s own comment on when it
+  // wouldn't (a replayed tutorial after baby mode's already ended).
+  app.tutorial.forcedPitch = saveData.babyModeDone ? 'ERiser' : 'BRiser';
   app.tutorial.awaitingContact = true;
   app.tutorial.battingMissCount = 0;
   app.tutorial.battingHintShown = false;
