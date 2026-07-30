@@ -268,6 +268,12 @@ function defaultSaveData() {
     playerUnlocked: { antman: true },
     cpuUnlocked: { antman: true },
     tournamentTrophies: {}, // character key -> true, set by handleTournamentProgression() on a championship run
+    // Baby mode (requested): a brand-new player's very first game gets a
+    // much slower, near-straight version of every pitch (see cpuPitch()'s
+    // babySet) instead of normal CPU pitching, so early batting struggles
+    // don't compound with everything else that's new. Ends permanently the
+    // moment either trigger fires - see scoreRun()/switchSides().
+    babyModeDone: false,
     stats: {
       everHitHomeRun: false,
       totalStrikeouts: 0,
@@ -300,6 +306,11 @@ function loadSaveData() {
       playerUnlocked: Object.assign({}, fresh.playerUnlocked, saved.playerUnlocked),
       cpuUnlocked: Object.assign({}, fresh.cpuUnlocked, saved.cpuUnlocked),
       tournamentTrophies: Object.assign({}, fresh.tournamentTrophies, saved.tournamentTrophies),
+      // A save from before baby mode existed has no field for it at all -
+      // treat that as "already past their first game" (true), not as a
+      // brand-new player who'd otherwise get baby mode retroactively applied
+      // to a save that's clearly not their first game.
+      babyModeDone: saved.babyModeDone === undefined ? true : !!saved.babyModeDone,
       stats: {
         everHitHomeRun: !!(saved.stats && saved.stats.everHitHomeRun),
         totalStrikeouts: (saved.stats && saved.stats.totalStrikeouts) || 0,
@@ -1420,6 +1431,26 @@ function applyPitchVelocity(pitchName) {
     EFastball: [10, 3], ECurveball: [9, 4, -0.32], EKnuckleball: [8, 0, 0], ERiser: [8, -4, 0.185],
     HFastball: [15, 1.2], HCurveball: [12, 7, -0.68], HKnuckleball: [12, 0, 0], HRiser: [12, -3.6, 0.164],
     FastballPlus: [30, -1.3],
+    // Baby mode (requested) - even slower than the E tier (xSpeed 6, vs. 8-10)
+    // with movement pared down to near nothing on every type, including
+    // Curveball tuned to actually land as a strike here (unlike every other
+    // Curveball tier) rather than arc out as a Ball - a first-time player
+    // should always get a real, reachable pitch to swing at. Knuckleball's
+    // chaos phase is driven separately by update()'s exact-name check
+    // (Knuckleball/EKnuckleball/HKnuckleball only), so BKnuckleball never
+    // enters it and just flies a plain, predictable line like the others.
+    // Bug fix: naively copying the other tiers' ySpeed0/accel (scaled down
+    // for the slower xSpeed) badly overshot the zone - at 6 xSpeed the ball
+    // takes ~49 ticks to reach the plate, 2-3x any other tier, so the exact
+    // same per-tick ySpeed0/accel compounds into a wildly different arrival
+    // height than intended - solved (not guessed) against update()'s real
+    // per-tick step (`ySpeed -= accel`, note the SUBTRACTION - the opposite
+    // sign convention from what the flight-time math naively suggests) to
+    // land dead center in the zone at that specific 49-tick flight time -
+    // Fastball/Knuckleball perfectly flat (accel 0), Curveball/Riser a
+    // barely-visible opposite-direction curve, all four still landing
+    // centered as a real, reachable pitch every time.
+    BFastball: [6, -0.561, 0], BCurveball: [6, -1.281, 0.03], BKnuckleball: [6, -0.561, 0], BRiser: [6, 0.159, -0.03],
   };
   if (table[pitchName]) {
     ball.xSpeed = lenX(table[pitchName][0]);
@@ -1499,7 +1530,15 @@ function scoreRun() {
     // Rally difficulty (requested): every 7 runs the human scores in a
     // single half-inning at bat, cpuPitch() bumps its pitch tier up by one
     // (capped at Hard) for the rest of that half - see its own comment.
-    if (!battingTeamIsHome()) app.runsThisHalfInning++;
+    if (!battingTeamIsHome()) {
+      app.runsThisHalfInning++;
+      // Baby mode (requested) ends the moment the human scores their first
+      // run - see cpuPitch()'s babySet/defaultSaveData()'s own comment.
+      if (!saveData.babyModeDone) {
+        saveData.babyModeDone = true;
+        persistSaveData();
+      }
+    }
   }
 }
 
@@ -1707,6 +1746,13 @@ function evaluateGameEndUnlocks() {
   // Reset every call (not just inside the win branch below) so a loss never
   // leaves a stale amount from an earlier win showing on drawGameOver().
   app.lastCoinsEarned = 0;
+  // Baby mode (requested) ends the moment the first game is over, win or
+  // lose, even if the human never scored - see cpuPitch()'s babySet/
+  // scoreRun()'s own trigger for the other way it can end.
+  if (!saveData.babyModeDone) {
+    saveData.babyModeDone = true;
+    persistSaveData();
+  }
   // Tournament mode (requested) doesn't pay out per-match like a Story win -
   // it pays out once, right here, the moment the run actually ends (a loss,
   // or winning the final) - not later in handleTournamentProgression(),
@@ -2110,6 +2156,20 @@ function cpuPitch() {
     // batPowerFull only goes false once M has genuinely been pressed.
     if (app.tutorial.requirePowerBeforePitch && app.batPowerFull) return;
     app.pitch = app.tutorial.forcedPitch;
+    app.isPitching = true;
+    return;
+  }
+  // Baby mode (requested): a brand-new player's very first game (until they
+  // score their first run or the game ends - see scoreRun()/switchSides())
+  // gets the same 4 pitch types but a much slower, near-straight version of
+  // each (see applyPitchVelocity()'s babySet table) instead of the CPU's
+  // normal difficulty-tiered pitching - and skips the CPU's own power-up
+  // roll entirely, since a power pitch (Ghost/Meteor/Void/...) would undo
+  // the whole point by throwing something far less predictable than even a
+  // Hard-tier plain pitch.
+  if (app.mode === 'solo' && !saveData.babyModeDone) {
+    const babySet = ['BFastball', 'BCurveball', 'BKnuckleball', 'BRiser'];
+    app.pitch = babySet[randRange(0, babySet.length)];
     app.isPitching = true;
     return;
   }
