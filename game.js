@@ -3132,32 +3132,34 @@ function stepTutorial() {
   // Only one hit-confirmed batting drill now (bat_easy) - contactMade can't
   // fire during bat_power_demo below, since that step never sets
   // awaitingContact at all (see beginPowerUpDemo()).
+  // Both batting textboxes are shown back-to-back here, fully, BEFORE the
+  // power-up demo starts (requested) - the demo itself has no textbox of
+  // its own trailing it (success or stuck-timeout, below), it just quietly
+  // hands off to awaitPitchingTurn() once the batting textboxes are done.
   if (t.contactMade) {
     t.contactMade = false;
     showTutorialDialog([
+      "Nice contact! You've got the fundamentals down.",
       IS_MOBILE
-        ? "Nice contact! Now try your power-up - tap the icon."
-        : "Nice contact! Now try your power-up - press M.",
+        ? "Now try your power-up - tap the icon. Keep batting for the rest of this inning - I'll cover pitching once it's your turn."
+        : "Now try your power-up - press M. Keep batting for the rest of this inning - I'll cover pitching once it's your turn.",
     ], beginPowerUpDemo);
     return;
   }
 
   // Power-up demo (bat_power_demo, see beginPowerUpDemo()): completes the
   // instant the player presses M at all - no follow-up swing/contact
-  // required (requested), unlike the batting drill above.
+  // required (requested), unlike the batting drill above. No textbox here -
+  // the batting textboxes already ran in full above, before this step even
+  // started, so completion just hands off to free batting directly.
   // Bug fix (requested): practiceStep alone doesn't change until
-  // awaitPitchingTurn() actually runs (as the dialogue's onDone, once
-  // dismissed) - without clearing it here first, this condition stayed true
-  // every single tick the dialogue was up, re-opening/resetting it before
-  // a click could ever finish advancing past it. Every other one-shot check
-  // in this function mutates state immediately for exactly this reason
-  // (contactMade/aimDemoSwung/pitchingStrikeoutDone above).
+  // awaitPitchingTurn() actually runs - without clearing it here first, this
+  // condition stayed true every single tick, re-triggering itself. Every
+  // other one-shot check in this function mutates state immediately for
+  // exactly this reason (contactMade/aimDemoSwung/pitchingStrikeoutDone above).
   if (t.practiceStep === 'bat_power_demo' && !app.batPowerFull) {
     t.practiceStep = null;
-    showTutorialDialog([
-      "Nice hitting! You've got the fundamentals down.",
-      "Keep batting for the rest of this inning - I'll cover pitching once it's your turn.",
-    ], awaitPitchingTurn);
+    awaitPitchingTurn();
     return;
   }
 
@@ -3170,16 +3172,13 @@ function stepTutorial() {
 
   // Power-up demo's own stuck-player fallback - never leave a player
   // blocked forever if they just never press M (mirrors the aim demo's own
-  // 30s forced-pass above). Same one-shot fix as the success case above -
-  // clear practiceStep before opening the dialogue so this can't re-fire
-  // and reset it every tick the dialogue is up.
+  // 30s forced-pass above). No textbox here either, same reasoning as the
+  // success check above. Same one-shot fix as the success case above -
+  // clear practiceStep before handing off so this can't re-fire.
   if (t.practiceStep === 'bat_power_demo') {
     if (++t.powerDrillTicks >= 1200) { // ~30s at 40 ticks/sec
       t.practiceStep = null;
-      showTutorialDialog([
-        "No worries - you'll get the hang of it!",
-        "Keep batting for the rest of this inning - I'll cover pitching once it's your turn.",
-      ], awaitPitchingTurn);
+      awaitPitchingTurn();
     }
     return;
   }
@@ -3204,11 +3203,14 @@ function stepTutorial() {
     // bat_easy gives up the same way here - a stuck player just keeps
     // batting for real rather than staying blocked forever. Routes through
     // beginPowerUpDemo() (not straight to awaitPitchingTurn()) so they still
-    // get the power-up demo, same as a successful contact would.
-    showTutorialDialog(
-      ["No worries - you'll get more chances! Let's still try your power-up - press M."],
-      beginPowerUpDemo
-    );
+    // get the power-up demo, same as a successful contact would - both
+    // textboxes shown back-to-back first, same as the contactMade path above.
+    showTutorialDialog([
+      "No worries - you'll get more chances!",
+      IS_MOBILE
+        ? "Let's still try your power-up - tap the icon. Keep batting for the rest of this inning - I'll cover pitching once it's your turn."
+        : "Let's still try your power-up - press M. Keep batting for the rest of this inning - I'll cover pitching once it's your turn.",
+    ], beginPowerUpDemo);
     return;
   }
 
