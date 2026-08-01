@@ -585,6 +585,11 @@ function drawTitleLogo() {
 // rotation metadata is pose-specific, not character-specific, so it lives in
 // its own small arrays and is reused across every character's image set.
 const SPRITES_DIR = 'assets/sprites/';
+// Roughly where the pitcher stands (PITCHER_FRAME_META's ready-stance x
+// below is 32) plus a little breathing room - a rolling Ground Out is
+// called once it reaches here (see the ball.y >= toY(300) ground-bounce
+// check in update()), not before.
+const GROUND_OUT_MOUND_X = 45;
 const PITCHER_FRAME_META = [
   { x: 32, y: 250 },
   { x: 27, y: 246 },
@@ -1581,6 +1586,16 @@ function clearPowerupVisuals() {
   // same contact/inning-change point every other persistent bat power resets.
   app.shieldWidth = 0;
   app.batterBig = false;
+  // Bug fix (requested): Mirror Ball/Time Stop are armed on M-press same as
+  // every other bat power above, but only actually resolve on a LATER event
+  // (an unswung strike reaching the plate, or the ball crossing toX(250) -
+  // see resolveUnswungStrike()/the app.stopTime check in update()). If the
+  // batter got out or the half-inning ended before that ever happened, these
+  // two were never included here, so they silently carried over armed into
+  // a future at-bat (even a different batter's) instead of clearing like
+  // every other power does at the same contact/inning-change point.
+  app.mirrorBallActive = false;
+  app.stopTime = false;
 }
 
 // Maps a live pitch name (Fastball/EFastball/HFastball/FastballPlus, etc.)
@@ -2444,7 +2459,6 @@ function resetMatchState() {
   app.pitcherFrameIndex = 0;
   app.batterFrameIndex = 0;
   app.pauseAnimActive = false;
-  app.mirrorBallActive = false;
   app.reverseBall = false;
   app.diceRolling = false;
   stopSound(POWER_SOUNDS.gamblerBatting); // safety net if a mode/match reset happens mid-roll
@@ -2954,7 +2968,7 @@ function beginPowerUpDemo() {
 }
 
 // Batting guidance is done (one real hit, then the power-up demo above, or
-// gave up after 8 misses on the hit itself - see stepTutorial()) - the rest
+// gave up after 6 misses on the hit itself - see stepTutorial()) - the rest
 // of THIS SAME at-bat's top-of-1st plays out for real at full difficulty, no
 // more forced pitches/guaranteed contact, until the inning ends and it
 // becomes the human's turn to pitch. That "ends" after just ONE real out now
@@ -3196,7 +3210,7 @@ function stepTutorial() {
     ], null);
     return;
   }
-  if (t.awaitingContact && t.battingMissCount >= 8) {
+  if (t.awaitingContact && t.battingMissCount >= 6) {
     t.awaitingContact = false;
     t.battingMissCount = 0;
     t.battingHintShown = false;
@@ -5993,15 +6007,17 @@ function update() {
   if (!justResolvedHit && ball.y >= toY(300)) {
     ball.y = toY(300);
     ball.ySpeed *= -0.08;
-    // Bug fix (requested): a fresh Ground Out always starts with a NEGATIVE
-    // xSpeed (moving left, same as every other hit), so the old `ball.xSpeed
-    // < lenX(1)` check was already true on the very first ground touch -
-    // any negative number is less than lenX(1) - calling it an out instantly
-    // with zero visible roll. The friction branch below (xSpeed += lenX(1.01)
-    // each touch, nudging it toward 0) never actually got to run. Comparing
-    // the magnitude instead means it only gets called out once the ball has
-    // genuinely rolled to a stop.
-    if (Math.abs(ball.xSpeed) < lenX(1)) {
+    // Ground Out (requested): the ball should visibly roll all the way back
+    // to the pitcher's mound before being ruled out, not just decelerate to
+    // a stop wherever it happens to run out of momentum on the infield -
+    // contact happens up near home plate (~toX(325)), far short of the mound
+    // (~toX(35)), so stopping on speed alone (the old `Math.abs(ball.xSpeed)
+    // < lenX(1)` check) always called it out well before it got there.
+    // Friction still slows the ball down tick-to-tick for a natural-looking
+    // roll, but is floored well above 0 (never allowed to fully stop) so it
+    // keeps crawling the rest of the way in instead of stalling short -
+    // reaching the mound itself is what actually ends it now.
+    if (ball.x <= toX(GROUND_OUT_MOUND_X)) {
       ball.xSpeed = 0;
       // Bug fix: this used to call clearCounts(true) - which also wipes ALL
       // out-dots - unconditionally right after recordOut(), immediately
@@ -6015,6 +6031,7 @@ function update() {
       recordOut();
     } else {
       ball.xSpeed += lenX(1.01);
+      if (ball.xSpeed > -lenX(3)) ball.xSpeed = -lenX(3);
     }
   }
 
