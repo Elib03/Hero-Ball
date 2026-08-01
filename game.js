@@ -3145,7 +3145,15 @@ function stepTutorial() {
   // Power-up demo (bat_power_demo, see beginPowerUpDemo()): completes the
   // instant the player presses M at all - no follow-up swing/contact
   // required (requested), unlike the batting drill above.
+  // Bug fix (requested): practiceStep alone doesn't change until
+  // awaitPitchingTurn() actually runs (as the dialogue's onDone, once
+  // dismissed) - without clearing it here first, this condition stayed true
+  // every single tick the dialogue was up, re-opening/resetting it before
+  // a click could ever finish advancing past it. Every other one-shot check
+  // in this function mutates state immediately for exactly this reason
+  // (contactMade/aimDemoSwung/pitchingStrikeoutDone above).
   if (t.practiceStep === 'bat_power_demo' && !app.batPowerFull) {
+    t.practiceStep = null;
     showTutorialDialog([
       "Nice hitting! You've got the fundamentals down.",
       "Keep batting for the rest of this inning - I'll cover pitching once it's your turn.",
@@ -3162,9 +3170,12 @@ function stepTutorial() {
 
   // Power-up demo's own stuck-player fallback - never leave a player
   // blocked forever if they just never press M (mirrors the aim demo's own
-  // 30s forced-pass above).
+  // 30s forced-pass above). Same one-shot fix as the success case above -
+  // clear practiceStep before opening the dialogue so this can't re-fire
+  // and reset it every tick the dialogue is up.
   if (t.practiceStep === 'bat_power_demo') {
     if (++t.powerDrillTicks >= 1200) { // ~30s at 40 ticks/sec
+      t.practiceStep = null;
       showTutorialDialog([
         "No worries - you'll get the hang of it!",
         "Keep batting for the rest of this inning - I'll cover pitching once it's your turn.",
