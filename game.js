@@ -5991,7 +5991,15 @@ function update() {
   if (!justResolvedHit && ball.y >= toY(300)) {
     ball.y = toY(300);
     ball.ySpeed *= -0.08;
-    if (ball.xSpeed < lenX(1)) {
+    // Bug fix (requested): a fresh Ground Out always starts with a NEGATIVE
+    // xSpeed (moving left, same as every other hit), so the old `ball.xSpeed
+    // < lenX(1)` check was already true on the very first ground touch -
+    // any negative number is less than lenX(1) - calling it an out instantly
+    // with zero visible roll. The friction branch below (xSpeed += lenX(1.01)
+    // each touch, nudging it toward 0) never actually got to run. Comparing
+    // the magnitude instead means it only gets called out once the ball has
+    // genuinely rolled to a stop.
+    if (Math.abs(ball.xSpeed) < lenX(1)) {
       ball.xSpeed = 0;
       // Bug fix: this used to call clearCounts(true) - which also wipes ALL
       // out-dots - unconditionally right after recordOut(), immediately
