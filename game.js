@@ -4797,6 +4797,18 @@ function drawPitchMeterOverlay() {
   drawPitchMeterBar(x, y, w, h);
 }
 
+// Points a bouncing arrow at the meter whenever a pitch is armed and
+// awaiting its confirming second press (requested) - some players don't
+// realize the SAME key/button needs pressing again once armed, and the
+// meter alone doesn't make that obvious. The tutorial's own pitching-intro
+// step already shows this exact arrow while it's active (see
+// tutorialArrowTarget()), so skip it here then to avoid drawing it twice.
+function drawPitchArmedArrow() {
+  if (!app.pitchArmed || app.tutorial.active) return;
+  const r = pitchMeterOverlayRect();
+  drawTutorialArrow(r.x + r.w / 2, r.y + r.h / 2);
+}
+
 function drawPitchMenu() {
   // Solo mode has the human as exactly one of pitcher/batter at a time (the
   // other is CPU) - the WASD/arrow pitch-key legend is only relevant while
@@ -5429,6 +5441,7 @@ function drawGameplay() {
   if (!IS_MOBILE) { drawPitchMenu(); drawPowerUpUi(); }
   drawSprites();
   drawPitchMeterOverlay(); // over the pitcher (requested) - see confirmArmedPitch()
+  drawPitchArmedArrow(); // requested: some players don't realize the same key needs pressing again once armed
   drawPowerupEffects();
   drawBall();
   drawGhostBalls(); // ghosts render ON TOP of the real ball so they can disguise it
