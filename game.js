@@ -3453,7 +3453,10 @@ function tutorialArrowTarget() {
     if (t.pitchIntroPhase === 'pressW') {
       // Once a type's actually armed (requested: press again to confirm),
       // point at the timing meter itself, over the pitcher.
-      if (app.pitchArmed) return { x: toX(PITCH_METER_OVERLAY.x), y: toY(PITCH_METER_OVERLAY.y) + toLen(PITCH_METER_OVERLAY.h) / 2 };
+      if (app.pitchArmed) {
+        const r = pitchMeterOverlayRect();
+        return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+      }
       return IS_MOBILE
         ? { x: toX(PITCH_BUTTONS[0].x) + lenX(PITCH_BUTTON_SIZE.w) / 2, y: toY(PITCH_BUTTON_SIZE.y) + toLen(PITCH_BUTTON_SIZE.h) / 2 }
         : { x: toX(10) + toLen(10), y: toY(310) + toLen(10) }; // drawPitchMenu()'s W/Fastball row - toLen(10) is half its toLen(20) box
@@ -4654,10 +4657,24 @@ function drawPitchMeterBar(x, y, w, h) {
 // the pitcher's sprite (PITCHER_FRAME_META's ready stance centers around
 // x=32, feet at y~300).
 const PITCH_METER_OVERLAY = { x: 32, y: 195, w: 76, h: 16 };
+// Actual on-screen rect for the meter - shared by drawPitchMeterOverlay() and
+// tutorialArrowTarget() so the arrow always points at where it's really
+// drawn, not just PITCH_METER_OVERLAY's raw (unclamped) center.
+// Bug fix (requested): centering the bar on the pitcher (x=32, near the left
+// edge of the 0-400 field) let its left half run off-canvas entirely (32 -
+// w/2 is negative once w is wider than 2*32). Clamp so the whole bar always
+// stays fully on screen, nudging it right instead of centering exactly on
+// the pitcher when the two conflict.
+function pitchMeterOverlayRect() {
+  const w = lenX(PITCH_METER_OVERLAY.w), h = toLen(PITCH_METER_OVERLAY.h);
+  const margin = toLen(6);
+  const x = Math.max(margin, Math.min(CANVAS_W - w - margin, toX(PITCH_METER_OVERLAY.x) - w / 2));
+  const y = toY(PITCH_METER_OVERLAY.y);
+  return { x, y, w, h };
+}
 function drawPitchMeterOverlay() {
   if (!app.pitchMeterActive || !app.pitchArmed) return;
-  const w = lenX(PITCH_METER_OVERLAY.w), h = toLen(PITCH_METER_OVERLAY.h);
-  const x = toX(PITCH_METER_OVERLAY.x) - w / 2, y = toY(PITCH_METER_OVERLAY.y);
+  const { x, y, w, h } = pitchMeterOverlayRect();
   drawPitchMeterBar(x, y, w, h);
 }
 
