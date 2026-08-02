@@ -215,10 +215,11 @@ const WIN_BASE_COINS = 50;
 const WIN_COINS_PER_RUN = 5; // solo win reward = WIN_BASE_COINS + (human's own score) * this
 const AD_REWARD_COINS = 40; // flat reward per fully-watched rewarded ad
 
-// Cost of level 1 and level 2, for both Pitching Power and Pitching Accuracy.
-// Higher than the old per-pitch-type cost (150/300) since one purchase now
-// improves the meter for all 4 pitch types at once instead of just one.
-const PITCH_UPGRADE_COST = [300, 600];
+// Cost of each of the 4 purchasable steps (level 1 is free) for both
+// Pitching Power and Pitching Accuracy - same 1-5/4-step shape as
+// BATTING_UPGRADE_COST, priced higher since one purchase improves the meter
+// for all 4 pitch types at once instead of just one.
+const PITCH_UPGRADE_COST = [150, 250, 350, 500];
 // Contact/Power levels are 1-5, not 0-5 - level 1 is the free starting point
 // (nothing bought yet), so there are only 4 purchasable steps (1->2, 2->3,
 // 3->4, 4->5). Costs here line up with those 4 steps, in order.
@@ -239,27 +240,35 @@ const PLAYER_BUY_COST_BY_RANK = [null, 200, 350, 500, 650, 800, 950, 1100, 1300,
 // meter's indicator lands (see the meter-tick code in update() and the WASD
 // branch in handleGameplayKey()), not a fixed shop purchase. These two shop
 // tracks make that meter more forgiving OVERALL - across all 4 pitch types
-// at once (requested), not per-type - Pitching Power widens the good
-// zone/shrinks the bad zone; Pitching Accuracy slows the sweep down (more
-// reaction time). Solo only - versus/CPU/tutorial always use level 0.
+// at once, not per-type - Pitching Power widens the good zone (bad stays a
+// FIXED size throughout - requested; only the good/okay split shifts, never
+// the actual bar or the bad zone); Pitching Accuracy slows the sweep down
+// (more reaction time). Same 1-5/4-purchasable-steps shape as the batting
+// Contact/Power upgrades (level 1 is the free starting point) - see
+// PITCH_UPGRADE_COST. Solo only - versus/CPU/tutorial always use level 1.
 const PITCH_ZONE_LEVELS = [
-  { good: 0.05, bad: 0.20 }, // level 0: good zone 10% wide, bad 20% off each end
-  { good: 0.08, bad: 0.15 }, // level 1: good 16%, bad 15% off each end
-  { good: 0.11, bad: 0.10 }, // level 2: good 22%, bad 10% off each end
+  { good: 0.050, bad: 0.20 }, // level 1 (free start)
+  { good: 0.065, bad: 0.20 },
+  { good: 0.080, bad: 0.20 },
+  { good: 0.095, bad: 0.20 },
+  { good: 0.110, bad: 0.20 }, // level 5 (max) - same good-zone width the old 3-level scale's max used
 ];
-const PITCH_SPEED_LEVELS = [35, 45, 58]; // ticks for the indicator to sweep one-way, by level (40 ticks/sec ~= 0.9s/1.1s/1.5s round trip)
+// Ticks for the indicator to sweep one-way, by level (40 ticks/sec). Level 5
+// (max) lands on the same speed the old 3-level scale's SECOND level used -
+// spreading that same ceiling across 4 purchasable steps instead of 2.
+const PITCH_SPEED_LEVELS = [35, 38, 40, 43, 45];
 function pitchPowerLevel() {
-  return app.mode === 'solo' ? saveData.pitchPower : 0;
+  return app.mode === 'solo' ? saveData.pitchPower : 1;
 }
 function pitchAccuracyLevel() {
-  return app.mode === 'solo' ? saveData.pitchAccuracy : 0;
+  return app.mode === 'solo' ? saveData.pitchAccuracy : 1;
 }
 // 'good'/'okay'/'bad', read at the exact instant the second (confirming)
 // press lands - see confirmArmedPitch(). Good is centered on the meter (pos
-// 0.5); bad is the outer edges (widths from PITCH_ZONE_LEVELS, upgraded via
-// Pitching Power); everything left over in between is okay.
+// 0.5); bad is the outer edges (widths from PITCH_ZONE_LEVELS, a fixed size
+// regardless of Pitching Power level); everything left over in between is okay.
 function pitchMeterZone() {
-  const { good, bad } = PITCH_ZONE_LEVELS[pitchPowerLevel()];
+  const { good, bad } = PITCH_ZONE_LEVELS[pitchPowerLevel() - 1];
   const pos = app.pitchMeterPos;
   if (Math.abs(pos - 0.5) <= good) return 'good';
   if (pos <= bad || pos >= 1 - bad) return 'bad';
@@ -313,26 +322,32 @@ function defaultSaveData() {
     // Every pitch's actual Easy/Normal/Hard tier now comes from the live
     // timing meter (see PITCH_ZONE_LEVELS/PITCH_SPEED_LEVELS/handleGameplayKey()),
     // not a fixed purchase - these two tracks instead buy a more forgiving
-    // meter OVERALL, across all 4 pitch types at once (requested - no longer
-    // per-type): Pitching Power widens the good/shrinks the bad zone,
-    // Pitching Accuracy slows the sweep down so there's more time to react.
-    // Each 0-2.
-    pitchPower: 0,
-    pitchAccuracy: 0,
+    // meter OVERALL, across all 4 pitch types at once: Pitching Power widens
+    // the good zone (bad stays fixed - only okay/good shift), Pitching
+    // Accuracy slows the sweep down so there's more time to react. Each 1-5,
+    // same shape as battingUpgrades below (level 1 free, 4 purchasable steps).
+    pitchPower: 1,
+    pitchAccuracy: 1,
     battingUpgrades: { contact: 1, power: 1 }, // each 1-5 - level 1 is the free starting point, not a purchase
   };
 }
-// Clamps a saved Contact/Power level into the current 1-5 range - guards
-// against an older save's 0 (that scale used to start at 0) ending up below
-// the new minimum and producing a negative/undersized radius.
+// Clamps a saved upgrade level into the shared 1-5 range used by every
+// upgrade track (batting Contact/Power, Pitching Power/Accuracy) - guards
+// against an older save's 0 (some of these scales used to start at 0)
+// ending up below the new minimum and producing a negative/undersized value.
 function clampBattingUpgradeLevel(value) {
   return Math.max(1, Math.min(5, Number(value) || 1));
 }
-// Same idea for Pitching Power/Pitching Accuracy (0-2 each, see
-// PITCH_ZONE_LEVELS/PITCH_SPEED_LEVELS) - guards a saved value that's
-// missing/out of range.
-function clampPitchUpgradeLevel(value) {
-  return Math.max(0, Math.min(2, Number(value) || 0));
+// Migration only: older saves' pitch upgrades topped out at a 0-2 scale
+// (either a flat per-type number, or a per-type {zone, speed} pair - see
+// loadSaveData()) before becoming today's 1-5 Pitching Power/Pitching
+// Accuracy. Maps that old 0/1/2 onto the new scale's start/middle/max so a
+// maxed-out old save lands on today's max instead of losing most of its
+// progress, rather than just adding 1 (which would leave old-max at only
+// today's level 3 of 5).
+function migrateOldPitchLevel(rawMax) {
+  const clamped = Math.max(0, Math.min(2, Math.round(rawMax) || 0));
+  return [1, 3, 5][clamped];
 }
 // Merges saved data over a fresh set of defaults (rather than trusting the
 // saved object's shape completely) so a save from before a future stat gets
@@ -368,12 +383,12 @@ function loadSaveData() {
       // player had reached in any one type, so past purchases still count
       // for something instead of silently vanishing.
       pitchPower: saved.pitchPower !== undefined
-        ? clampPitchUpgradeLevel(saved.pitchPower)
-        : clampPitchUpgradeLevel(Math.max(0, ...Object.values(saved.pitchUpgrades || {})
+        ? clampBattingUpgradeLevel(saved.pitchPower)
+        : migrateOldPitchLevel(Math.max(0, ...Object.values(saved.pitchUpgrades || {})
             .map(v => (typeof v === 'number' ? v : v && v.zone) || 0))),
       pitchAccuracy: saved.pitchAccuracy !== undefined
-        ? clampPitchUpgradeLevel(saved.pitchAccuracy)
-        : clampPitchUpgradeLevel(Math.max(0, ...Object.values(saved.pitchUpgrades || {})
+        ? clampBattingUpgradeLevel(saved.pitchAccuracy)
+        : migrateOldPitchLevel(Math.max(0, ...Object.values(saved.pitchUpgrades || {})
             .map(v => (v && typeof v === 'object' && v.speed) || 0))),
       battingUpgrades: {
         contact: clampBattingUpgradeLevel(saved.battingUpgrades && saved.battingUpgrades.contact),
@@ -2899,7 +2914,7 @@ function stepPitchMeter() {
   const tutorialBlocks = app.tutorial.active && app.tutorial.practiceStep !== 'pitch';
   app.pitchMeterActive = !!app.pitchArmed && !tutorialBlocks;
   if (!app.pitchMeterActive) return;
-  app.pitchMeterPos += app.pitchMeterDir / PITCH_SPEED_LEVELS[pitchAccuracyLevel()];
+  app.pitchMeterPos += app.pitchMeterDir / PITCH_SPEED_LEVELS[pitchAccuracyLevel() - 1];
   if (app.pitchMeterPos >= 1) { app.pitchMeterPos = 1; app.pitchMeterDir = -1; }
   else if (app.pitchMeterPos <= 0) { app.pitchMeterPos = 0; app.pitchMeterDir = 1; }
 }
@@ -4393,11 +4408,11 @@ function drawSoloSelect() {
 
 /* ============================== UPGRADES SCREEN (Solo mode only) ==============================
    Reached from the "Upgrades" button on drawSoloSelect()/drawMobileCharacterSelect().
-   4 purchasable rows: Pitching Power/Pitching Accuracy (each 0-2, OVERALL
-   across all 4 pitch types - see PITCH_ZONE_LEVELS/PITCH_SPEED_LEVELS for
-   what each level actually buys the pitch-timing meter) then Contact/Power
-   (each 1-5, level 1 free) - see baseCrosshairRadius()/baseCriticalRadius()
-   for how those affect gameplay. */
+   4 purchasable rows, all sharing the same 1-5/4-purchasable-step shape
+   (level 1 free): Pitching Power/Pitching Accuracy (OVERALL across all 4
+   pitch types - see PITCH_ZONE_LEVELS/PITCH_SPEED_LEVELS for what each level
+   actually buys the pitch-timing meter) then Contact/Power - see
+   baseCrosshairRadius()/baseCriticalRadius() for how those affect gameplay. */
 const UPGRADE_WATCH_AD_BUTTON = { x: 150, y: 10, w: 100, h: 32 };
 const UPGRADE_ROWS = [
   { type: 'pitchPower', label: 'Pitching Power (bigger zone)' },
@@ -4410,20 +4425,18 @@ function upgradeRowLevel(row) {
   if (row.type === 'pitchAccuracy') return saveData.pitchAccuracy;
   return saveData.battingUpgrades[row.key];
 }
-function upgradeRowMaxLevel(row) {
-  return row.type === 'batting' ? 5 : 2;
+function upgradeRowMaxLevel() {
+  return 5;
 }
 function upgradeRowCost(row) {
   const level = upgradeRowLevel(row);
-  if (level >= upgradeRowMaxLevel(row)) return null;
-  // Pitch levels are 0-indexed (0/1/2), so level itself is the right table
-  // index. Batting levels are 1-indexed (1-5, see BATTING_UPGRADE_COST's own
-  // comment) - the cost to leave level L sits at table[L-1].
-  return row.type === 'batting' ? BATTING_UPGRADE_COST[level - 1] : PITCH_UPGRADE_COST[level];
+  if (level >= upgradeRowMaxLevel()) return null;
+  // Every track is 1-indexed (1-5, see BATTING_UPGRADE_COST/PITCH_UPGRADE_COST's
+  // own comments) - the cost to leave level L sits at table[L-1].
+  return (row.type === 'batting' ? BATTING_UPGRADE_COST : PITCH_UPGRADE_COST)[level - 1];
 }
 function upgradeRowStatusText(row) {
-  const level = upgradeRowLevel(row);
-  return row.type === 'batting' ? level + '/5' : level + '/2';
+  return upgradeRowLevel(row) + '/5';
 }
 function buyUpgradeRow(index) {
   const row = UPGRADE_ROWS[index];
@@ -4618,7 +4631,7 @@ function pointInPitchMenuRow(index, x, y) {
 // already-scaled absolute canvas coordinates, same convention as rect().
 const PITCH_METER_ZONE_COLORS = { bad: '#ff4d4d', okay: '#ffe14d', good: '#4dff4d' };
 function drawPitchMeterBar(x, y, w, h) {
-  const { good, bad } = PITCH_ZONE_LEVELS[pitchPowerLevel()];
+  const { good, bad } = PITCH_ZONE_LEVELS[pitchPowerLevel() - 1];
   const goodStart = 0.5 - good, goodEnd = 0.5 + good;
   [
     { from: 0, to: bad, color: PITCH_METER_ZONE_COLORS.bad },
