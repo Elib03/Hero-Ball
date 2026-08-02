@@ -247,11 +247,11 @@ const PLAYER_BUY_COST_BY_RANK = [null, 200, 350, 500, 650, 800, 950, 1100, 1300,
 // Contact/Power upgrades (level 1 is the free starting point) - see
 // PITCH_UPGRADE_COST. Solo only - versus/CPU/tutorial always use level 1.
 const PITCH_ZONE_LEVELS = [
-  { good: 0.050, bad: 0.20 }, // level 1 (free start)
-  { good: 0.065, bad: 0.20 },
-  { good: 0.080, bad: 0.20 },
-  { good: 0.095, bad: 0.20 },
-  { good: 0.110, bad: 0.20 }, // level 5 (max) - same good-zone width the old 3-level scale's max used
+  { good: 0.025, bad: 0.20 }, // level 1 (free start)
+  { good: 0.033, bad: 0.20 },
+  { good: 0.040, bad: 0.20 },
+  { good: 0.048, bad: 0.20 },
+  { good: 0.055, bad: 0.20 }, // level 5 (max) - requested smaller: half the old max width
 ];
 // Ticks for the indicator to sweep one-way, by level (40 ticks/sec). Level 5
 // (max) lands on the same speed the old 3-level scale's SECOND level used -
