@@ -3261,6 +3261,14 @@ function stepTutorial() {
       // gets below - remind them immediately.
       t.aimDemoOnTarget = false;
       t.aimDemoHintShown = true;
+      // Bug fix (requested): the ghost demo is meant to show whenever the
+      // text hint does - this branch sets the SAME hint caption as the one
+      // below but never armed the ghost alongside it, so a player who
+      // touched the ball once and drifted off (skipping the 10s delay
+      // entirely, per the comment above) got the text hint with no visual
+      // demo ever accompanying it.
+      t.aimGhostActive = true;
+      t.aimGhostTicks = 0;
       t.captionText = IS_MOBILE
         ? 'Move the joystick so your circle lands right on the ball.'
         : 'Move your mouse so your circle lands right on the ball.';
