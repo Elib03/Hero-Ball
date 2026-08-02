@@ -243,20 +243,20 @@ const PITCH_ZONE_LEVELS = [
   { good: 0.08, bad: 0.15 }, // level 1: good 16%, bad 15% off each end
   { good: 0.11, bad: 0.10 }, // level 2: good 22%, bad 10% off each end
 ];
-const PITCH_SPEED_LEVELS = [35, 45, 58]; // ticks for the indicator to sweep one-way, by level (60fps ~= 0.6s/0.75s/1s)
+const PITCH_SPEED_LEVELS = [35, 45, 58]; // ticks for the indicator to sweep one-way, by level (40 ticks/sec ~= 0.9s/1.1s/1.5s round trip)
 function pitchZoneLevel(baseType) {
   return app.mode === 'solo' ? saveData.pitchUpgrades[baseType.toLowerCase()].zone : 0;
 }
 function pitchSpeedLevel(baseType) {
   return app.mode === 'solo' ? saveData.pitchUpgrades[baseType.toLowerCase()].speed : 0;
 }
-// 'good'/'okay'/'bad', read at the exact instant the WASD key lands - see
-// handleGameplayKey(). Good is centered on the meter (pos 0.5); bad is the
-// outer edges (widths from PITCH_ZONE_LEVELS, upgraded per pitch type);
+// 'good'/'okay'/'bad', read at the exact instant the confirm click/tap lands
+// - see confirmArmedPitch(). Good is centered on the meter (pos 0.5); bad is
+// the outer edges (widths from PITCH_ZONE_LEVELS, upgraded per pitch type);
 // everything left over in between is okay.
 function pitchMeterZone(type) {
   const { good, bad } = PITCH_ZONE_LEVELS[pitchZoneLevel(type)];
-  const pos = app.pitchMeter[type].pos;
+  const pos = app.pitchMeterPos;
   if (Math.abs(pos - 0.5) <= good) return 'good';
   if (pos <= bad || pos >= 1 - bad) return 'bad';
   return 'okay';
@@ -994,21 +994,21 @@ const app = {
   ballSlow: false,
   ballFast: false,
 
-  // Pitch timing meter (requested): while it's a human's turn to pitch and
-  // the mound is clear (see stepPitchMeter() in update()), each of the 4
-  // pitch types sweeps its OWN indicator back and forth across 0-1,
-  // independently, since each type can have its own Zone/Speed upgrade level
-  // (see PITCH_ZONE_LEVELS/PITCH_SPEED_LEVELS) - a leveled-up Curveball
-  // visibly sweeps slower/more forgiving than a stock Fastball, right there
-  // on screen. Landing the matching WASD press in the good/okay/bad zone
-  // throws Hard/Normal/Easy (see handleGameplayKey()). Off entirely during
-  // the tutorial (its guided pitching drill stays exactly as scripted) and
-  // during any auto-sequence power-up's own animation (nothing to time).
+  // Pitch timing meter (requested): pressing a pitch-type key/button ARMS
+  // that type (pitchArmed) instead of throwing it immediately - a meter then
+  // sweeps back and forth over the pitcher (see stepPitchMeter()/
+  // drawPitchMeterOverlay()) until a click/tap CONFIRMS it (see
+  // confirmArmedPitch()), landing in the good/okay/bad zone throws
+  // Hard/Normal/Easy. Zone/Speed upgrade levels (PITCH_ZONE_LEVELS/
+  // PITCH_SPEED_LEVELS) make the armed type's own meter more forgiving.
+  // Active during real gameplay and the tutorial's guided pitching drill
+  // (which now teaches this same mechanic) - never during any other
+  // tutorial step, and never for an auto-sequence power-up (those throw
+  // themselves immediately, nothing to arm or time).
+  pitchArmed: null, // null | 'fastball' | 'curveball' | 'riser' | 'knuckleball'
   pitchMeterActive: false,
-  pitchMeter: {
-    fastball: { pos: 0, dir: 1 }, curveball: { pos: 0, dir: 1 },
-    riser: { pos: 0, dir: 1 }, knuckleball: { pos: 0, dir: 1 },
-  },
+  pitchMeterPos: 0,
+  pitchMeterDir: 1,
 
   stopTime: false,
   timeStopActive: false,
@@ -2532,6 +2532,7 @@ function resetMatchState() {
   app.pitcherFrameIndex = 0;
   app.batterFrameIndex = 0;
   app.pauseAnimActive = false;
+  app.pitchArmed = null;
   app.reverseBall = false;
   app.diceRolling = false;
   stopSound(POWER_SOUNDS.gamblerBatting); // safety net if a mode/match reset happens mid-roll
@@ -2884,19 +2885,19 @@ function stepDialogTypewriter() {
 }
 
 const PITCH_TYPES = ['fastball', 'curveball', 'riser', 'knuckleball'];
-// Sweeps each of the 4 pitch types' own timing-meter indicator back and
-// forth whenever a human is actually free to throw one right now - mirrors
-// canStartPitch()/handleGameplayKey()'s own guard exactly, so the meter is
-// only ever moving during the same window a WASD press would register.
+// Sweeps the currently-armed pitch type's meter back and forth (see
+// handleGameplayKey()'s WASD branch, which arms rather than throws directly)
+// until confirmArmedPitch() consumes it. Blocked during the tutorial except
+// its own guided pitching drill, which now teaches this same mechanic
+// (forceStrikeOnBall guarantees the outcome regardless of tier, so letting
+// the real timing meter run here doesn't risk breaking that guarantee).
 function stepPitchMeter() {
-  app.pitchMeterActive = !app.tutorial.active && app.activePitcherKey !== 'cpu' && canStartPitch() && !ghostBalls[0].visible;
+  const tutorialBlocks = app.tutorial.active && app.tutorial.practiceStep !== 'pitch';
+  app.pitchMeterActive = !!app.pitchArmed && !tutorialBlocks;
   if (!app.pitchMeterActive) return;
-  PITCH_TYPES.forEach(type => {
-    const m = app.pitchMeter[type];
-    m.pos += m.dir / PITCH_SPEED_LEVELS[pitchSpeedLevel(type)];
-    if (m.pos >= 1) { m.pos = 1; m.dir = -1; }
-    else if (m.pos <= 0) { m.pos = 0; m.dir = 1; }
-  });
+  app.pitchMeterPos += app.pitchMeterDir / PITCH_SPEED_LEVELS[pitchSpeedLevel(app.pitchArmed)];
+  if (app.pitchMeterPos >= 1) { app.pitchMeterPos = 1; app.pitchMeterDir = -1; }
+  else if (app.pitchMeterPos <= 0) { app.pitchMeterPos = 0; app.pitchMeterDir = 1; }
 }
 
 function showTutorialDialog(lines, onDone) {
@@ -2968,8 +2969,8 @@ function beginPitchPractice() {
   // single non-blocking caption instead, same as everything else in the
   // guided intro below.
   app.tutorial.captionText = IS_MOBILE
-    ? 'Nice work! Now pitching - tap the Fastball button below.'
-    : 'Nice work! Now pitching - press W to throw a Fastball.';
+    ? 'Nice work! Now pitching - tap Fastball below, then tap again when the bar turns green!'
+    : 'Nice work! Now pitching - press W, then click when the bar turns green!';
 }
 
 // A real pitch launches like any other, then gets frozen mid-flight (see
@@ -3418,6 +3419,10 @@ function tutorialArrowTarget() {
   if (!t.active) return null;
   if (t.practiceStep === 'pitch') {
     if (t.pitchIntroPhase === 'pressW') {
+      // Once a type's actually armed (requested: press-then-click), point at
+      // the timing meter itself, over the pitcher - same spot on both
+      // platforms, since that's where the confirm click/tap needs to land.
+      if (app.pitchArmed) return { x: toX(PITCH_METER_OVERLAY.x), y: toY(PITCH_METER_OVERLAY.y) + toLen(PITCH_METER_OVERLAY.h) / 2 };
       return IS_MOBILE
         ? { x: toX(PITCH_BUTTONS[0].x) + lenX(PITCH_BUTTON_SIZE.w) / 2, y: toY(PITCH_BUTTON_SIZE.y) + toLen(PITCH_BUTTON_SIZE.h) / 2 }
         : { x: toX(10) + toLen(10), y: toY(310) + toLen(10) }; // drawPitchMenu()'s W/Fastball row - toLen(10) is half its toLen(20) box
@@ -3580,18 +3585,23 @@ function handleGameplayKey(key, repeat) {
     else if ((usesWasd && key === 's') || (!usesWasd && key === 'arrowdown')) base = 'Curveball';
     else if ((usesWasd && key === 'd') || (!usesWasd && key === 'arrowright')) base = 'Riser';
     if (base) {
-      app.isPitching = true;
-      if (app.ballSlow) { app.pitch = 'E' + base; app.ballSlow = false; }
-      else if (app.ballFast) { app.pitch = 'H' + base; app.ballFast = false; }
-      // Timing meter (requested): good/bad timing on THIS key's own press
-      // throws Hard/Easy, okay throws the plain base pitch - see
-      // pitchMeterZone()/stepPitchMeter(). Only active outside the tutorial
-      // (see stepPitchMeter()) - the tutorial's forced/scripted pitch always
-      // just falls through to the plain base pitch below.
-      else if (app.pitchMeterActive) {
-        const zone = pitchMeterZone(base.toLowerCase());
-        app.pitch = (zone === 'good' ? 'H' : zone === 'bad' ? 'E' : '') + base;
-      } else { app.pitch = base; }
+      // Gambler's Roll dice outcomes are already a predetermined tier - like
+      // every auto-sequence power-up, there's nothing to time, so these
+      // throw immediately exactly as before, bypassing the arm/meter/confirm
+      // flow below entirely.
+      if (app.ballSlow) { app.isPitching = true; app.pitch = 'E' + base; app.ballSlow = false; }
+      else if (app.ballFast) { app.isPitching = true; app.pitch = 'H' + base; app.ballFast = false; }
+      else {
+        // Timing meter (requested): this key ARMS the pitch instead of
+        // throwing it - a meter then sweeps over the pitcher until a click/
+        // tap CONFIRMS it (see confirmArmedPitch()). Pressing a different
+        // pitch key while one's already armed just re-arms to the new type
+        // (canStartPitch() stays true throughout - isPitching only becomes
+        // true once confirmArmedPitch() actually throws it).
+        app.pitchArmed = base.toLowerCase();
+        app.pitchMeterPos = 0;
+        app.pitchMeterDir = 1;
+      }
     }
   }
 
@@ -3625,10 +3635,29 @@ function handleGameplayKey(key, repeat) {
   // self-contained animation (Ghost/Meteor), immediately delivers the pitch
   // with the modifier attached so there is never a window where a second
   // pitch could be thrown mid-effect (see canStartPitch bug fix above).
-  if (pitchPowerKeyPressed && humanPitching && app.pitchPowerFull && canStartPitch() && !ghostBalls[0].visible) {
+  // Bug fix: also blocked while a plain pitch is already armed and awaiting
+  // its confirm click (app.pitchArmed) - activating an auto-sequence power
+  // then would leave that stale arm/meter dangling into the power's own
+  // animation, and a later click would wrongly confirm-throw a second,
+  // unrelated pitch on top of it.
+  if (pitchPowerKeyPressed && humanPitching && app.pitchPowerFull && canStartPitch() && !ghostBalls[0].visible && !app.pitchArmed) {
     app.humanUsedPowerThisGame = true; // for the "won without using a power-up" unlock condition
     activatePitchPower();
   }
+}
+
+// Confirms whichever pitch type is currently armed (see handleGameplayKey()'s
+// WASD branch) - reads the timing meter's position at this exact instant to
+// pick Hard/Normal/Easy, then actually throws it. Wired to a click/tap (see
+// handlePointerDown()/handleMobilePlayTap()), the same way a swing is.
+function confirmArmedPitch() {
+  const type = app.pitchArmed;
+  if (!type) return;
+  app.pitchArmed = null;
+  const base = type.charAt(0).toUpperCase() + type.slice(1);
+  const zone = pitchMeterZone(type);
+  app.isPitching = true;
+  app.pitch = (zone === 'good' ? 'H' : zone === 'bad' ? 'E' : '') + base;
 }
 
 // Activates whichever bat power the current batter holds - extracted out of
@@ -3794,14 +3823,18 @@ function handlePointerDown(x, y) {
   if (app.dialog.active && app.dialog.lines.length > 0) { advanceDialog(); return; }
   if (IS_MOBILE) { handleMobilePlayTap(x, y); return; }
   // Solo mode (requested): clicking a pitch-menu row (drawPitchMenu()'s W/A/S/D
-  // key-hint boxes) throws that pitch, same as pressing the actual key -
-  // not just a visual legend anymore. Versus mode keeps keyboard-only pitching.
+  // key-hint boxes) arms that pitch type, same as pressing the actual key -
+  // not just a visual legend anymore. Versus mode keeps keyboard-only arming.
   if (app.mode === 'solo' && app.activePitcherKey !== 'cpu') {
     const keys = ['w', 'a', 's', 'd'];
     for (let i = 0; i < 4; i++) {
       if (pointInPitchMenuRow(i, x, y)) { handleGameplayKey(keys[i]); return; }
     }
   }
+  // Timing meter (requested): any click that isn't one of the pitch-menu
+  // rows above (e.g. clicking the meter itself, drawn over the pitcher)
+  // confirms whichever type is currently armed.
+  if (app.activePitcherKey !== 'cpu' && app.pitchArmed) { confirmArmedPitch(); return; }
   if (app.activeBatterKey === 'cpu') return;
   if (x > toX(250)) attemptSwing();
 }
@@ -4589,8 +4622,21 @@ function drawPitchMeterBar(type, x, y, w, h) {
     rect(x + w * seg.from, y, w * (seg.to - seg.from), h, seg.color, 0.85);
   });
   rect(x, y, w, h, null, 1, 'white', 1);
-  const markerX = x + w * app.pitchMeter[type].pos;
+  const markerX = x + w * app.pitchMeterPos;
   rect(markerX - toLen(1), y - toLen(2), toLen(2), h + toLen(4), 'white');
+}
+
+// Meter is drawn once, over the pitcher (requested - not down in the grass
+// with the pitch buttons), only while a type is actually armed and awaiting
+// its confirm click/tap - see confirmArmedPitch(). Position sits just above
+// the pitcher's sprite (PITCHER_FRAME_META's ready stance centers around
+// x=32, feet at y~300).
+const PITCH_METER_OVERLAY = { x: 32, y: 195, w: 76, h: 16 };
+function drawPitchMeterOverlay() {
+  if (!app.pitchMeterActive || !app.pitchArmed) return;
+  const w = lenX(PITCH_METER_OVERLAY.w), h = toLen(PITCH_METER_OVERLAY.h);
+  const x = toX(PITCH_METER_OVERLAY.x) - w / 2, y = toY(PITCH_METER_OVERLAY.y);
+  drawPitchMeterBar(app.pitchArmed, x, y, w, h);
 }
 
 function drawPitchMenu() {
@@ -4605,18 +4651,12 @@ function drawPitchMenu() {
     ? [['W', 'Fastball'], ['A', 'Knuckleball'], ['S', 'Curveball'], ['D', 'Riser']]
     : [['↑', 'Fastball'], ['←', 'Knuckleball'], ['↓', 'Curveball'], ['→', 'Riser']];
   const boxSize = toLen(20); // uniform (not lenX) so the key square stays square, not stretched
-  const pitchTypeByRow = ['fastball', 'knuckleball', 'curveball', 'riser']; // same order as entries/PITCH_BUTTONS
   entries.forEach(([label, name], i) => {
     const y = 310 + i * 20;
     const boxX = toX(10), boxY = toY(y);
     rect(boxX, boxY, boxSize, boxSize, 'black', 0.6);
     text(label, boxX + boxSize / 2, boxY + boxSize / 2, 14, 'white', 1, 'center', 700);
     text(name, boxX + boxSize + lenX(8), boxY + boxSize / 2, 15, 'white', 1, 'left');
-    // Timing meter (requested): only meaningful while a human could actually
-    // throw right now - see stepPitchMeter().
-    if (app.pitchMeterActive) {
-      drawPitchMeterBar(pitchTypeByRow[i], toX(210), boxY + boxSize / 2 - toLen(6), lenX(90), toLen(12));
-    }
   });
 }
 
@@ -4743,12 +4783,6 @@ function drawPitchButtons() {
     rect(bx, by, bw, bh, 'rgba(0,0,0,0.6)', 1, 'white', 2);
     text(p.label, bx + bw / 2, by + toLen(14), 12, 'white', 1, 'center', 700);
     drawPitchPathIcon(bx + toLen(8), by + toLen(24), bw - toLen(16), toLen(28), p.type);
-    // Timing meter (requested): only meaningful while a human could actually
-    // throw right now - see stepPitchMeter(). Sits in the button's own
-    // bottom strip, under the trajectory icon.
-    if (app.pitchMeterActive) {
-      drawPitchMeterBar(p.type, bx + toLen(6), by + bh - toLen(9), bw - toLen(12), toLen(6));
-    }
   });
 }
 
@@ -4817,6 +4851,9 @@ function handleMobilePlayTap(x, y) {
       if (pointInPitchButton(p, x, y)) { handleGameplayKey(usesWasd ? p.key : p.arrowKey); return; }
     }
     if (pointInPowerupButton(POWERUP_BUTTON_PITCHING, x, y)) { handleGameplayKey('z'); return; }
+    // Timing meter (requested): tapping anywhere else (the meter itself,
+    // drawn over the pitcher) confirms whichever type is currently armed.
+    if (app.pitchArmed) { confirmArmedPitch(); return; }
   }
 }
 
@@ -5205,6 +5242,7 @@ function drawGameplay() {
   // touchscreen - drawMobileControls() below is the mobile equivalent.
   if (!IS_MOBILE) { drawPitchMenu(); drawPowerUpUi(); }
   drawSprites();
+  drawPitchMeterOverlay(); // over the pitcher (requested) - see confirmArmedPitch()
   drawPowerupEffects();
   drawBall();
   drawGhostBalls(); // ghosts render ON TOP of the real ball so they can disguise it
