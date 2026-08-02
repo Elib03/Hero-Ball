@@ -1179,16 +1179,17 @@ const app = {
     aimDemoSwung: false, // set by attemptSwing() once the player swings while on-target
     aimDemoTicks: 0, // ticks spent frozen-and-not-yet-on-target - drives the stuck-player nudge/auto-advance below
     aimDemoHintShown: false,
-    // Ghost-crosshair demo (requested): the text hint above only reaches
-    // players who read English - a player who's stuck specifically on the
-    // "move something onto the ball" concept (not the swing itself) gets a
-    // silent, looping visual instead once the same stuck-player threshold
-    // hits, showing a translucent ring gliding from an offset point onto the
-    // ball and pausing there - see drawAimGhostDemo(). Language-agnostic by
-    // construction, so it's shown ALONGSIDE the text hint, not instead of it.
-    aimGhostActive: false,
-    aimGhostTicks: 0,
     captionText: '', // shown by drawTutorialOverlay() as a slim top banner while gameplay keeps running underneath
+    // Ghost-crosshair demo (requested): the bat_easy hint's text below only
+    // reaches players who read English - alongside it, a translucent ring
+    // glides from wherever the player's crosshair actually was at the moment
+    // the hint fired, over to the (live pitch, currently frozen by the
+    // blocking hint dialog) ball, then pauses - see drawBattingHintGhostDemo().
+    // Purely visual, so it lands regardless of language.
+    battingGhostActive: false,
+    battingGhostTicks: 0,
+    battingGhostStartX: 0,
+    battingGhostStartY: 0,
   },
   // Generic speaker dialogue box - the tutorial's Coach lines and solo-mode
   // opponent intro/win/lose lines both go through this same state/rendering
@@ -3011,18 +3012,17 @@ function beginPitchPractice() {
 // stationary target and plenty of room to move the crosshair onto it.
 const AIM_DEMO_FREEZE_X = 300;
 
-// Ghost-crosshair demo (requested, see drawAimGhostDemo()): a looping
-// glide-then-hold-then-pause cycle, entirely visual so it lands regardless
-// of what language the player reads. Offset is a fixed diagonal (screen
-// pixels) from the ball's own position - a consistent, readable "move this
-// ring down-and-right onto the ball" motion every loop, rather than tying
-// the demo's start point to wherever the player's real crosshair happens to
-// be (which could make the glide distance tiny/inconsistent).
-const AIM_GHOST_GLIDE_TICKS = 50;
-const AIM_GHOST_HOLD_TICKS = 25;
-const AIM_GHOST_PAUSE_TICKS = 25;
-const AIM_GHOST_CYCLE_TICKS = AIM_GHOST_GLIDE_TICKS + AIM_GHOST_HOLD_TICKS + AIM_GHOST_PAUSE_TICKS;
-const AIM_GHOST_OFFSET = { dx: -60, dy: -50 }; // screen px, up-and-left of the ball
+// Ghost-crosshair demo for the bat_easy hint (requested, see
+// drawBattingHintGhostDemo()): a looping glide-then-hold-then-pause cycle,
+// entirely visual so it lands regardless of what language the player reads.
+// Starts from wherever the player's crosshair actually was the moment the
+// hint fired (captured once - see stepTutorial()'s battingHintShown check),
+// not a fixed offset, since this hint is about a LIVE pitch already
+// somewhere on screen rather than a fixed frozen-ball position.
+const BATTING_GHOST_GLIDE_TICKS = 50;
+const BATTING_GHOST_HOLD_TICKS = 25;
+const BATTING_GHOST_PAUSE_TICKS = 25;
+const BATTING_GHOST_CYCLE_TICKS = BATTING_GHOST_GLIDE_TICKS + BATTING_GHOST_HOLD_TICKS + BATTING_GHOST_PAUSE_TICKS;
 
 function beginBattingAimDemo() {
   app.tutorial.forceWhiffCpuBatter = false;
@@ -3054,8 +3054,6 @@ function beginBattingAimDemo() {
   app.tutorial.aimDemoSwung = false;
   app.tutorial.aimDemoTicks = 0;
   app.tutorial.aimDemoHintShown = false;
-  app.tutorial.aimGhostActive = false;
-  app.tutorial.aimGhostTicks = 0;
   app.tutorial.captionText = '';
 }
 
@@ -3085,6 +3083,8 @@ function beginBattingEasy() {
   app.tutorial.awaitingContact = true;
   app.tutorial.battingMissCount = 0;
   app.tutorial.battingHintShown = false;
+  app.tutorial.battingGhostActive = false;
+  app.tutorial.battingGhostTicks = 0;
 }
 
 // A small step of its own right after the one real batting hit (requested) -
@@ -3117,6 +3117,8 @@ function awaitPitchingTurn() {
   app.tutorial.awaitingContact = false;
   app.tutorial.battingMissCount = 0;
   app.tutorial.battingHintShown = false;
+  app.tutorial.battingGhostActive = false;
+  app.tutorial.battingGhostTicks = 0;
   app.tutorial.captionText = '';
 }
 
@@ -3155,6 +3157,13 @@ function stepTutorial() {
   // finish once the dialog closes again, reading as the banner popping up
   // out of nowhere right as the text ends. Wait for it to finish first.
   if (app.callActive) return;
+
+  // Batting hint's ghost-crosshair demo (see the battingHintShown check
+  // below) - ticks every tutorial step regardless of which branch below
+  // actually runs, since it needs to keep animating while its own hint
+  // dialog is blocking the rest of update() (stepTutorial() still runs
+  // every tick even then - see update()'s call order).
+  if (t.battingGhostActive) t.battingGhostTicks = (t.battingGhostTicks + 1) % BATTING_GHOST_CYCLE_TICKS;
 
   // Guided pitching intro (see beginPitchPractice()): walks the player
   // through one plain pitch, points out the pitch menu, then one power-up
@@ -3250,7 +3259,6 @@ function stepTutorial() {
       // Just moved onto the ball.
       t.aimDemoOnTarget = true;
       t.aimDemoTicks = 0;
-      t.aimGhostActive = false; // they've got it - no need for the visual demo anymore
       t.captionText = IS_MOBILE ? 'Perfect! Now tap SWING!' : 'Perfect! Now click to swing!';
     } else if (!onTargetNow && t.aimDemoOnTarget) {
       // Bug fix (requested): drifted back off the ball after lining up -
@@ -3261,14 +3269,6 @@ function stepTutorial() {
       // gets below - remind them immediately.
       t.aimDemoOnTarget = false;
       t.aimDemoHintShown = true;
-      // Bug fix (requested): the ghost demo is meant to show whenever the
-      // text hint does - this branch sets the SAME hint caption as the one
-      // below but never armed the ghost alongside it, so a player who
-      // touched the ball once and drifted off (skipping the 10s delay
-      // entirely, per the comment above) got the text hint with no visual
-      // demo ever accompanying it.
-      t.aimGhostActive = true;
-      t.aimGhostTicks = 0;
       t.captionText = IS_MOBILE
         ? 'Move the joystick so your circle lands right on the ball.'
         : 'Move your mouse so your circle lands right on the ball.';
@@ -3276,18 +3276,14 @@ function stepTutorial() {
       t.aimDemoTicks++;
       if (t.aimDemoTicks === 400 && !t.aimDemoHintShown) { // ~10s at 40 ticks/sec
         t.aimDemoHintShown = true;
-        t.aimGhostActive = true; // language-agnostic visual, alongside the text hint below
-        t.aimGhostTicks = 0;
         t.captionText = IS_MOBILE
           ? 'Move the joystick so your circle lands right on the ball.'
           : 'Move your mouse so your circle lands right on the ball.';
       } else if (t.aimDemoTicks >= 1200) { // ~30s total - never leave a stuck player blocked forever
         t.aimDemoForcedOnTarget = true;
         t.aimDemoOnTarget = true;
-        t.aimGhostActive = false;
         t.captionText = IS_MOBILE ? 'Now tap SWING!' : 'Now click to swing!';
       }
-      if (t.aimGhostActive) t.aimGhostTicks = (t.aimGhostTicks + 1) % AIM_GHOST_CYCLE_TICKS;
     }
   }
 
@@ -3362,11 +3358,21 @@ function stepTutorial() {
   // progress on it entirely after enough more attempts either way.
   if (t.awaitingContact && !t.battingHintShown && t.battingMissCount >= 3) {
     t.battingHintShown = true;
+    // Ghost-crosshair demo (requested): starts from wherever the player's
+    // crosshair actually is right now - the dialog below freezes the ball in
+    // place for its whole duration (see update()'s dialog-active guard), so
+    // gliding from here to the (now-still) ball demonstrates exactly the
+    // motion needed, language-agnostic. Cleared again once the dialog closes
+    // (onDone) - it's only meant to accompany the hint itself.
+    t.battingGhostActive = true;
+    t.battingGhostTicks = 0;
+    t.battingGhostStartX = crosshairX;
+    t.battingGhostStartY = crosshairY;
     showTutorialDialog([
       IS_MOBILE
         ? "Hint: steer the joystick so your circle lines up with the ball, then hit SWING right as it's inside."
         : "Hint: line your circle up with the ball as it comes in, then click right as it's inside.",
-    ], null);
+    ], () => { t.battingGhostActive = false; });
     return;
   }
   if (t.awaitingContact && t.battingMissCount >= 6) {
@@ -3596,6 +3602,12 @@ function drawTutorialOverlay() {
   const arrowTarget = tutorialArrowTarget();
   if (arrowTarget) drawTutorialArrow(arrowTarget.x, arrowTarget.y);
   drawDialogOverlay();
+  // Drawn AFTER the dialog overlay's dim scrim (not before, in drawGameplay()
+  // with the rest of gameplay) so it stays crisp and fully visible on top of
+  // it, same as the Coach art/text drawDialogOverlay() itself draws on top of
+  // that same dimming - the hint dialog that arms this is blocking, so
+  // without this it would render dimmed underneath the scrim instead.
+  drawBattingHintGhostDemo();
 }
 
 /* ============================== INPUT: GAMEPLAY ============================== */
@@ -5143,25 +5155,28 @@ function drawCrosshair() {
   }
 }
 
-// Ghost-crosshair demo (requested, see stepTutorial()'s aimGhostActive
-// trigger) - a translucent ring that glides in from a fixed offset, holds
-// on the ball with a gentle pulse, then pauses (invisible) before looping.
-// Purely visual - conveys "move your circle onto the ball" with no text, so
-// it lands the same regardless of what language the player reads.
-function drawAimGhostDemo() {
+// Ghost-crosshair demo for the bat_easy hint (requested, see
+// stepTutorial()'s battingGhostActive trigger) - a translucent ring that
+// glides from wherever the player's crosshair was when the hint fired, over
+// to the ball, holds there with a gentle pulse, then pauses (invisible)
+// before looping. Purely visual - conveys "move your circle onto the ball"
+// with no text, so it lands the same regardless of what language the player
+// reads. The hint dialog freezes the ball in place for its whole run, so the
+// end point stays put same as the start.
+function drawBattingHintGhostDemo() {
   const t = app.tutorial;
-  if (!t.active || !t.aimGhostActive || t.practiceStep !== 'bat_aim_demo') return;
-  const ticks = t.aimGhostTicks;
+  if (!t.active || !t.battingGhostActive) return;
+  const ticks = t.battingGhostTicks;
   let x, y, opacity;
-  if (ticks < AIM_GHOST_GLIDE_TICKS) {
-    const p = ticks / AIM_GHOST_GLIDE_TICKS;
+  if (ticks < BATTING_GHOST_GLIDE_TICKS) {
+    const p = ticks / BATTING_GHOST_GLIDE_TICKS;
     const eased = p * p * (3 - 2 * p); // smoothstep - eases in/out rather than a linear slide
-    x = ball.x + AIM_GHOST_OFFSET.dx * (1 - eased);
-    y = ball.y + AIM_GHOST_OFFSET.dy * (1 - eased);
+    x = t.battingGhostStartX + (ball.x - t.battingGhostStartX) * eased;
+    y = t.battingGhostStartY + (ball.y - t.battingGhostStartY) * eased;
     opacity = 0.8;
-  } else if (ticks < AIM_GHOST_GLIDE_TICKS + AIM_GHOST_HOLD_TICKS) {
+  } else if (ticks < BATTING_GHOST_GLIDE_TICKS + BATTING_GHOST_HOLD_TICKS) {
     x = ball.x; y = ball.y;
-    opacity = 0.6 + 0.3 * Math.sin((ticks - AIM_GHOST_GLIDE_TICKS) * 0.4); // gentle pulse while parked on target
+    opacity = 0.6 + 0.3 * Math.sin((ticks - BATTING_GHOST_GLIDE_TICKS) * 0.4); // gentle pulse while parked on target
   } else {
     return; // pause phase - a clear break before the loop restarts
   }
@@ -5349,7 +5364,6 @@ function drawGameplay() {
   drawGhostBalls(); // ghosts render ON TOP of the real ball so they can disguise it
   drawDiceGame();
   drawCrosshair();
-  drawAimGhostDemo(); // language-agnostic "move here" visual - see stepTutorial()'s aimGhostActive
   drawCallBanner();
   drawPauseAnim();
   if (IS_MOBILE) drawMobileControls();
