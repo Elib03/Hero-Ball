@@ -1186,11 +1186,12 @@ const app = {
     // call banner, which alone takes ~100 ticks - see stepTutorial()'s
     // app.callActive guard), the missed pitch has long since been reset - the
     // ball just sits parked at the mound, not "frozen mid-flight", so there's
-    // nothing live worth animating toward yet. Once the dialog closes
-    // (requested), this waits for the NEXT real pitch to actually start
-    // moving, THEN glides from its current spot to where it's actually going
-    // to end up (see predictBattingContactSpot()) - showing not just where
-    // the ball IS, but where to have the crosshair waiting for it.
+    // nothing live worth animating toward yet. Only becomes visible once the
+    // dialog is actually dismissed (requested) - it then waits for the NEXT
+    // real pitch to start moving, THEN glides from the player's own
+    // crosshair to where that pitch is actually going to end up (see
+    // predictBattingContactSpot()) - "move from where you are to where it'll
+    // be," not just "here's the ball."
     battingGhostActive: false,
     battingGhostPhase: null, // null | 'waitingForPitch' | 'toTarget'
     battingGhostTicks: 0,
@@ -3205,8 +3206,11 @@ function stepTutorial() {
       // stuck wait can never hang around forever.
       if (ball.visible && ball.xSpeed > 0) {
         const spot = predictBattingContactSpot();
-        t.battingGhostStartX = ball.x;
-        t.battingGhostStartY = ball.y;
+        // Starts from the player's own crosshair (requested), not the ball -
+        // "move from where you are to where it'll be," not "watch the ball
+        // move."
+        t.battingGhostStartX = crosshairX;
+        t.battingGhostStartY = crosshairY;
         t.battingGhostTargetX = spot.x;
         t.battingGhostTargetY = spot.y;
         t.battingGhostPhase = 'toTarget';
