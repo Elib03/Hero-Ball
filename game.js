@@ -1181,16 +1181,18 @@ const app = {
     aimDemoHintShown: false,
     captionText: '', // shown by drawTutorialOverlay() as a slim top banner while gameplay keeps running underneath
     // Ghost-crosshair demo (requested): the bat_easy hint's text below only
-    // reaches players who read English. Two legs, both purely visual - see
-    // drawBattingHintGhostDemo(): while the hint dialog is up ('toBall'), a
-    // ring loops from wherever the player's crosshair actually was over to
-    // the ball (frozen in place by the blocking dialog); once the dialog
-    // closes ('toTarget', requested), a second one-shot leg glides from the
-    // ball's now-resumed-moving position to where it's actually going to end
-    // up (see predictBattingContactSpot()) - showing not just where the ball
-    // IS, but where to have the crosshair waiting for it.
+    // reaches players who read English. By the time the hint dialog actually
+    // opens (battingMissCount's 3rd miss already resolved and cleared its own
+    // call banner, which alone takes ~100 ticks - see stepTutorial()'s
+    // app.callActive guard), the missed pitch has long since been reset - the
+    // ball just sits parked at the mound, not "frozen mid-flight", so there's
+    // nothing live worth animating toward yet. Once the dialog closes
+    // (requested), this waits for the NEXT real pitch to actually start
+    // moving, THEN glides from its current spot to where it's actually going
+    // to end up (see predictBattingContactSpot()) - showing not just where
+    // the ball IS, but where to have the crosshair waiting for it.
     battingGhostActive: false,
-    battingGhostPhase: null, // null | 'toBall' | 'toTarget'
+    battingGhostPhase: null, // null | 'waitingForPitch' | 'toTarget'
     battingGhostTicks: 0,
     battingGhostStartX: 0,
     battingGhostStartY: 0,
@@ -3019,23 +3021,11 @@ function beginPitchPractice() {
 const AIM_DEMO_FREEZE_X = 300;
 
 // Ghost-crosshair demo for the bat_easy hint (requested, see
-// drawBattingHintGhostDemo()): a looping glide-then-hold-then-pause cycle,
-// entirely visual so it lands regardless of what language the player reads.
-// Starts from wherever the player's crosshair actually was the moment the
-// hint fired (captured once - see stepTutorial()'s battingHintShown check),
-// not a fixed offset, since this hint is about a LIVE pitch already
-// somewhere on screen rather than a fixed frozen-ball position.
-const BATTING_GHOST_GLIDE_TICKS = 50;
-const BATTING_GHOST_HOLD_TICKS = 25;
-const BATTING_GHOST_PAUSE_TICKS = 25;
-const BATTING_GHOST_CYCLE_TICKS = BATTING_GHOST_GLIDE_TICKS + BATTING_GHOST_HOLD_TICKS + BATTING_GHOST_PAUSE_TICKS;
-// The 'toTarget' leg (see below) plays out against a LIVE pitch that's
-// already resumed moving toward the plate the instant the dialog closes -
-// unlike 'toBall' (which loops for as long as the blocking dialog stays up,
-// no time pressure), this one needs to finish well within whatever flight
-// time is actually left, which can be short if the 3rd miss that triggered
-// the hint happened late in the pitch's approach. Much faster than the
-// 'toBall' timing above for exactly that reason.
+// drawBattingHintGhostDemo()) - a one-shot glide-then-hold, entirely visual
+// so it lands regardless of what language the player reads. Plays out
+// against a LIVE pitch already heading for the plate (see stepTutorial()'s
+// 'waitingForPitch'/'toTarget' phases), so it needs to finish well within
+// whatever flight time is actually left - kept short for that reason.
 const BATTING_GHOST_TOTARGET_GLIDE_TICKS = 12;
 const BATTING_GHOST_TOTARGET_HOLD_TICKS = 8;
 // Where should the player have their crosshair by the time the ball arrives
@@ -3201,15 +3191,31 @@ function stepTutorial() {
 
   // Batting hint's ghost-crosshair demo (see the battingHintShown check
   // below) - ticks every tutorial step regardless of which branch below
-  // actually runs, since it needs to keep animating while its own hint
-  // dialog is blocking the rest of update() (stepTutorial() still runs
-  // every tick even then - see update()'s call order). 'toBall' loops
-  // forever (however long the player takes to close the dialog); 'toTarget'
-  // is a one-shot that ends itself once its single glide+hold finishes.
+  // actually runs. Cancels itself outright if the drill moves on for some
+  // other reason (gave up after 6 misses, contact finally made, etc.)
+  // before either phase below gets a chance to finish naturally.
   if (t.battingGhostActive) {
-    if (t.battingGhostPhase === 'toBall') {
-      t.battingGhostTicks = (t.battingGhostTicks + 1) % BATTING_GHOST_CYCLE_TICKS;
-    } else {
+    if (t.practiceStep !== 'bat_easy' || !t.awaitingContact) {
+      t.battingGhostActive = false;
+      t.battingGhostPhase = null;
+    } else if (t.battingGhostPhase === 'waitingForPitch') {
+      // Waits for the NEXT real pitch to actually start moving (see the
+      // field comment on battingGhostPhase for why there's nothing live to
+      // reference yet right when this phase begins) - capped at ~10s so a
+      // stuck wait can never hang around forever.
+      if (ball.visible && ball.xSpeed > 0) {
+        const spot = predictBattingContactSpot();
+        t.battingGhostStartX = ball.x;
+        t.battingGhostStartY = ball.y;
+        t.battingGhostTargetX = spot.x;
+        t.battingGhostTargetY = spot.y;
+        t.battingGhostPhase = 'toTarget';
+        t.battingGhostTicks = 0;
+      } else if (++t.battingGhostTicks > 400) {
+        t.battingGhostActive = false;
+        t.battingGhostPhase = null;
+      }
+    } else { // 'toTarget' - a one-shot that ends itself once its single glide+hold finishes
       t.battingGhostTicks++;
       if (t.battingGhostTicks >= BATTING_GHOST_TOTARGET_GLIDE_TICKS + BATTING_GHOST_TOTARGET_HOLD_TICKS) {
         t.battingGhostActive = false;
@@ -3411,30 +3417,20 @@ function stepTutorial() {
   // progress on it entirely after enough more attempts either way.
   if (t.awaitingContact && !t.battingHintShown && t.battingMissCount >= 3) {
     t.battingHintShown = true;
-    // Ghost-crosshair demo (requested): starts from wherever the player's
-    // crosshair actually is right now - the dialog below freezes the ball in
-    // place for its whole duration (see update()'s dialog-active guard), so
-    // gliding from here to the (now-still) ball demonstrates exactly the
-    // motion needed, language-agnostic. Once the dialog closes (onDone), it
-    // continues into a second leg (requested) instead of just stopping -
-    // see predictBattingContactSpot().
-    t.battingGhostActive = true;
-    t.battingGhostPhase = 'toBall';
-    t.battingGhostTicks = 0;
-    t.battingGhostStartX = crosshairX;
-    t.battingGhostStartY = crosshairY;
     showTutorialDialog([
       IS_MOBILE
         ? "Hint: steer the joystick so your circle lines up with the ball, then hit SWING right as it's inside."
         : "Hint: line your circle up with the ball as it comes in, then click right as it's inside.",
     ], () => {
-      const spot = predictBattingContactSpot();
-      t.battingGhostPhase = 'toTarget';
+      // Ghost-crosshair demo (requested): by now the missed pitch that
+      // triggered this hint has long since been reset (see the field
+      // comment above) - nothing live to glide toward yet. Wait for the
+      // NEXT real pitch to actually start moving (see the battingGhostPhase
+      // === 'waitingForPitch' check below) before predicting where it'll end
+      // up and starting the glide.
+      t.battingGhostActive = true;
+      t.battingGhostPhase = 'waitingForPitch';
       t.battingGhostTicks = 0;
-      t.battingGhostStartX = ball.x;
-      t.battingGhostStartY = ball.y;
-      t.battingGhostTargetX = spot.x;
-      t.battingGhostTargetY = spot.y;
     });
     return;
   }
@@ -5219,40 +5215,28 @@ function drawCrosshair() {
 }
 
 // Ghost-crosshair demo for the bat_easy hint (requested, see
-// stepTutorial()'s battingGhostActive trigger) - two legs, both a
-// translucent ring easing in then holding with a gentle pulse:
-// 'toBall' (looping, while the hint dialog is up): glides from wherever the
-//   player's crosshair was when the hint fired over to the ball, which the
-//   dialog freezes in place for its whole run - end point stays put same as
-//   the start, so it can pause (invisible) and repeat cleanly.
-// 'toTarget' (one-shot, right after the dialog closes - requested): glides
-//   from the ball's now-resumed-moving position to where it's actually
-//   going to end up (see predictBattingContactSpot()), then just stops -
-//   showing not just where the ball IS, but where to have the crosshair
-//   waiting for it.
-// Purely visual either way - conveys the idea with no text, so it lands the
-// same regardless of what language the player reads.
+// stepTutorial()'s battingGhostActive trigger) - a one-shot translucent ring
+// that, once the next real pitch is actually moving ('toTarget' - see
+// stepTutorial()'s 'waitingForPitch' wait), glides from its current spot to
+// where it's actually going to end up (see predictBattingContactSpot()),
+// holds there with a gentle pulse, then stops. Nothing to draw during
+// 'waitingForPitch' - there's no live ball yet to reference. Purely visual -
+// conveys the idea with no text, so it lands the same regardless of what
+// language the player reads.
 function drawBattingHintGhostDemo() {
   const t = app.tutorial;
-  if (!t.active || !t.battingGhostActive) return;
+  if (!t.active || !t.battingGhostActive || t.battingGhostPhase !== 'toTarget') return;
   const ticks = t.battingGhostTicks;
-  const toBall = t.battingGhostPhase === 'toBall';
-  const endX = toBall ? ball.x : t.battingGhostTargetX;
-  const endY = toBall ? ball.y : t.battingGhostTargetY;
-  const glideTicks = toBall ? BATTING_GHOST_GLIDE_TICKS : BATTING_GHOST_TOTARGET_GLIDE_TICKS;
-  const holdTicks = toBall ? BATTING_GHOST_HOLD_TICKS : BATTING_GHOST_TOTARGET_HOLD_TICKS;
   let x, y, opacity;
-  if (ticks < glideTicks) {
-    const p = ticks / glideTicks;
+  if (ticks < BATTING_GHOST_TOTARGET_GLIDE_TICKS) {
+    const p = ticks / BATTING_GHOST_TOTARGET_GLIDE_TICKS;
     const eased = p * p * (3 - 2 * p); // smoothstep - eases in/out rather than a linear slide
-    x = t.battingGhostStartX + (endX - t.battingGhostStartX) * eased;
-    y = t.battingGhostStartY + (endY - t.battingGhostStartY) * eased;
+    x = t.battingGhostStartX + (t.battingGhostTargetX - t.battingGhostStartX) * eased;
+    y = t.battingGhostStartY + (t.battingGhostTargetY - t.battingGhostStartY) * eased;
     opacity = 0.8;
-  } else if (ticks < glideTicks + holdTicks) {
-    x = endX; y = endY;
-    opacity = 0.6 + 0.3 * Math.sin((ticks - glideTicks) * 0.4); // gentle pulse while parked on target
   } else {
-    return; // 'toBall' pause phase - a clear break before the loop restarts ('toTarget' never reaches here, it ends itself first - see stepTutorial())
+    x = t.battingGhostTargetX; y = t.battingGhostTargetY;
+    opacity = 0.6 + 0.3 * Math.sin((ticks - BATTING_GHOST_TOTARGET_GLIDE_TICKS) * 0.4); // gentle pulse while parked on target
   }
   circle(x, y, crosshairRadius, null, opacity, 'white', toLen(2.5));
 }
