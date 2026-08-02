@@ -215,7 +215,7 @@ const WIN_BASE_COINS = 50;
 const WIN_COINS_PER_RUN = 5; // solo win reward = WIN_BASE_COINS + (human's own score) * this
 const AD_REWARD_COINS = 40; // flat reward per fully-watched rewarded ad
 
-const PITCH_UPGRADE_COST = [150, 300]; // cost of tier 1 (Easy->Normal) and tier 2 (Normal->Hard), same for all 4 pitch types
+const PITCH_UPGRADE_COST = [150, 300]; // cost of level 1 and level 2, same for all 4 pitch types AND both the Zone/Speed tracks
 // Contact/Power levels are 1-5, not 0-5 - level 1 is the free starting point
 // (nothing bought yet), so there are only 4 purchasable steps (1->2, 2->3,
 // 3->4, 4->5). Costs here line up with those 4 steps, in order.
@@ -232,9 +232,34 @@ const POWER_RADIUS_STEP = 0.375; // (5 - 3.5) / 4 steps
 // Indexed by PROGRESSION_ORDER position; index 0 (antman) is free/unbuyable.
 const PLAYER_BUY_COST_BY_RANK = [null, 200, 350, 500, 650, 800, 950, 1100, 1300, 1500];
 
-function pitchTierPrefix(baseType) {
-  const level = saveData.pitchUpgrades[baseType.toLowerCase()] || 0;
-  return level === 0 ? 'E' : level === 2 ? 'H' : '';
+// Every throw's Easy/Normal/Hard tier now comes from where the pitch-timing
+// meter's indicator lands (see the meter-tick code in update() and the WASD
+// branch in handleGameplayKey()), not a fixed shop purchase. These two
+// tracks instead make that meter itself more forgiving for one pitch type:
+// Zone widens the good zone/shrinks the bad zone; Speed slows the sweep down
+// (more reaction time). Solo only - versus/CPU/tutorial always use level 0.
+const PITCH_ZONE_LEVELS = [
+  { good: 0.05, bad: 0.20 }, // level 0: good zone 10% wide, bad 20% off each end
+  { good: 0.08, bad: 0.15 }, // level 1: good 16%, bad 15% off each end
+  { good: 0.11, bad: 0.10 }, // level 2: good 22%, bad 10% off each end
+];
+const PITCH_SPEED_LEVELS = [35, 45, 58]; // ticks for the indicator to sweep one-way, by level (60fps ~= 0.6s/0.75s/1s)
+function pitchZoneLevel(baseType) {
+  return app.mode === 'solo' ? saveData.pitchUpgrades[baseType.toLowerCase()].zone : 0;
+}
+function pitchSpeedLevel(baseType) {
+  return app.mode === 'solo' ? saveData.pitchUpgrades[baseType.toLowerCase()].speed : 0;
+}
+// 'good'/'okay'/'bad', read at the exact instant the WASD key lands - see
+// handleGameplayKey(). Good is centered on the meter (pos 0.5); bad is the
+// outer edges (widths from PITCH_ZONE_LEVELS, upgraded per pitch type);
+// everything left over in between is okay.
+function pitchMeterZone(type) {
+  const { good, bad } = PITCH_ZONE_LEVELS[pitchZoneLevel(type)];
+  const pos = app.pitchMeter[type].pos;
+  if (Math.abs(pos - 0.5) <= good) return 'good';
+  if (pos <= bad || pos >= 1 - bad) return 'bad';
+  return 'okay';
 }
 function baseCrosshairRadius() {
   return app.mode === 'solo' ? toLen(11 + (saveData.battingUpgrades.contact - 1) * CONTACT_RADIUS_STEP) : toLen(11);
@@ -281,7 +306,15 @@ function defaultSaveData() {
       winsWithCharacter: {}, // character key -> true, tracked for the 9 non-Scientist characters
     },
     coins: 0,
-    pitchUpgrades: { fastball: 0, curveball: 0, riser: 0, knuckleball: 0 }, // each 0/1/2 (Easy/Normal/Hard)
+    // Every pitch's actual Easy/Normal/Hard tier now comes from the live
+    // timing meter (see PITCH_ZONE_LEVELS/PITCH_SPEED_LEVELS/handleGameplayKey()),
+    // not a fixed purchase - these two tracks per pitch type instead buy a more
+    // forgiving meter for that type: zone widens the good/shrinks the bad
+    // zone, speed slows the sweep down so there's more time to react. Each 0-2.
+    pitchUpgrades: {
+      fastball: { zone: 0, speed: 0 }, curveball: { zone: 0, speed: 0 },
+      riser: { zone: 0, speed: 0 }, knuckleball: { zone: 0, speed: 0 },
+    },
     battingUpgrades: { contact: 1, power: 1 }, // each 1-5 - level 1 is the free starting point, not a purchase
   };
 }
@@ -290,6 +323,11 @@ function defaultSaveData() {
 // the new minimum and producing a negative/undersized radius.
 function clampBattingUpgradeLevel(value) {
   return Math.max(1, Math.min(5, Number(value) || 1));
+}
+// Same idea for the pitch Zone/Speed tracks (0-2 each, see PITCH_ZONE_LEVELS/
+// PITCH_SPEED_LEVELS) - guards a saved value that's missing/out of range.
+function clampPitchUpgradeLevel(value) {
+  return Math.max(0, Math.min(2, Number(value) || 0));
 }
 // Merges saved data over a fresh set of defaults (rather than trusting the
 // saved object's shape completely) so a save from before a future stat gets
@@ -318,7 +356,21 @@ function loadSaveData() {
         winsWithCharacter: Object.assign({}, saved.stats && saved.stats.winsWithCharacter),
       },
       coins: Math.max(0, Number(saved.coins) || 0),
-      pitchUpgrades: Object.assign({}, fresh.pitchUpgrades, saved.pitchUpgrades),
+      // Bug fix (migration): older saves stored a single 0/1/2 tier number per
+      // pitch type (the old fixed-tier shop) instead of today's {zone, speed}
+      // pair - Object.assign alone would just overwrite the fresh {zone,speed}
+      // default with that bare number, breaking every read of .zone/.speed.
+      // Carry an old numeric level into the zone track (the closer analog of
+      // "pitches came out better") and leave speed at 0, so past purchases
+      // still count for something instead of silently vanishing.
+      pitchUpgrades: Object.fromEntries(Object.keys(fresh.pitchUpgrades).map(type => {
+        const savedVal = saved.pitchUpgrades && saved.pitchUpgrades[type];
+        if (typeof savedVal === 'number') return [type, { zone: clampPitchUpgradeLevel(savedVal), speed: 0 }];
+        return [type, {
+          zone: clampPitchUpgradeLevel(savedVal && savedVal.zone),
+          speed: clampPitchUpgradeLevel(savedVal && savedVal.speed),
+        }];
+      })),
       battingUpgrades: {
         contact: clampBattingUpgradeLevel(saved.battingUpgrades && saved.battingUpgrades.contact),
         power: clampBattingUpgradeLevel(saved.battingUpgrades && saved.battingUpgrades.power),
@@ -350,7 +402,6 @@ function unlockCharacter(type, key) {
 const KNUCKLE_CHAOS_END_X = 280; // knuckleball bounces chaotically before this x, then corrects into the zone (0-400 units)
 const KNUCKLE_ZONE_TARGET_Y = 277; // corrective phase steers toward dead-center of the strike zone (265-290)
 
-const DIFFICULTY_NAMES = ['Easy', 'Normal', 'Hard'];
 const DIFFICULTY_COLORS = ['#4dff4d', '#ffe14d', '#ff4d4d'];
 const FULL_POWER_STOPS = ['red', 'orange', 'yellow', 'green', 'blue', 'purple'];
 
@@ -942,6 +993,22 @@ const app = {
   homeRun: false,
   ballSlow: false,
   ballFast: false,
+
+  // Pitch timing meter (requested): while it's a human's turn to pitch and
+  // the mound is clear (see stepPitchMeter() in update()), each of the 4
+  // pitch types sweeps its OWN indicator back and forth across 0-1,
+  // independently, since each type can have its own Zone/Speed upgrade level
+  // (see PITCH_ZONE_LEVELS/PITCH_SPEED_LEVELS) - a leveled-up Curveball
+  // visibly sweeps slower/more forgiving than a stock Fastball, right there
+  // on screen. Landing the matching WASD press in the good/okay/bad zone
+  // throws Hard/Normal/Easy (see handleGameplayKey()). Off entirely during
+  // the tutorial (its guided pitching drill stays exactly as scripted) and
+  // during any auto-sequence power-up's own animation (nothing to time).
+  pitchMeterActive: false,
+  pitchMeter: {
+    fastball: { pos: 0, dir: 1 }, curveball: { pos: 0, dir: 1 },
+    riser: { pos: 0, dir: 1 }, knuckleball: { pos: 0, dir: 1 },
+  },
 
   stopTime: false,
   timeStopActive: false,
@@ -2179,16 +2246,22 @@ function cpuSwing() {
     // original ~70/20/10 proportions (see CPU_BAT_ODDS_BY_DIFFICULTY),
     // just scaled up or down together with the total hit rate.
     let [whiffB, singleB, doubleB] = CPU_BAT_ODDS_BY_DIFFICULTY[app.difficultyIndex];
-    // Solo-only: each upgrade level bought for the SPECIFIC pitch type just
-    // thrown shaves 2 percentage points off the CPU's hit rate (20/1000),
-    // pulled from the Single tier's width (singleB/doubleB stay put) since a
-    // sharper pitch should turn marginal contact into a whiff, not erase a
-    // clean double/homer that was already going to happen. Doesn't touch
-    // versus mode or any power-pitch (those take the app.powerUpActive
-    // branch above, never reach here).
+    // Bug fix (this pitch's actual tier now comes from the timing meter, not
+    // a fixed shop level - see PITCH_ZONE_LEVELS/handleGameplayKey() - so this
+    // used to read a now-nonexistent flat saveData.pitchUpgrades[type] number.
+    // A Hard pitch (good timing) shaves 4 percentage points off the CPU's hit
+    // rate (40/1000), Normal (okay timing) shaves 2 (20/1000), Easy (bad
+    // timing) shaves none - pulled from the Single tier's width (singleB/
+    // doubleB stay put) since a sharper pitch should turn marginal contact
+    // into a whiff, not erase a clean double/homer that was already going to
+    // happen. Doesn't touch versus mode or any power-pitch (those take the
+    // app.powerUpActive branch above, never reach here).
     if (app.mode === 'solo') {
       const pitchType = basePitchType(app.pitch);
-      if (pitchType) whiffB = Math.min(singleB, whiffB + saveData.pitchUpgrades[pitchType] * 20);
+      if (pitchType) {
+        const tierBonus = app.pitch.startsWith('H') ? 40 : app.pitch.startsWith('E') ? 0 : 20;
+        whiffB = Math.min(singleB, whiffB + tierBonus);
+      }
     }
     const roll = randRange(0, 1000);
     if (roll < whiffB) { /* whiff */ }
@@ -2808,6 +2881,22 @@ function stepDialogTypewriter() {
   if (d.lines.length > 0 && d.revealProgress < d.lines[0].length) {
     d.revealProgress += 1 / TYPEWRITER_TICKS_PER_CHAR;
   }
+}
+
+const PITCH_TYPES = ['fastball', 'curveball', 'riser', 'knuckleball'];
+// Sweeps each of the 4 pitch types' own timing-meter indicator back and
+// forth whenever a human is actually free to throw one right now - mirrors
+// canStartPitch()/handleGameplayKey()'s own guard exactly, so the meter is
+// only ever moving during the same window a WASD press would register.
+function stepPitchMeter() {
+  app.pitchMeterActive = !app.tutorial.active && app.activePitcherKey !== 'cpu' && canStartPitch() && !ghostBalls[0].visible;
+  if (!app.pitchMeterActive) return;
+  PITCH_TYPES.forEach(type => {
+    const m = app.pitchMeter[type];
+    m.pos += m.dir / PITCH_SPEED_LEVELS[pitchSpeedLevel(type)];
+    if (m.pos >= 1) { m.pos = 1; m.dir = -1; }
+    else if (m.pos <= 0) { m.pos = 0; m.dir = 1; }
+  });
 }
 
 function showTutorialDialog(lines, onDone) {
@@ -3494,8 +3583,15 @@ function handleGameplayKey(key, repeat) {
       app.isPitching = true;
       if (app.ballSlow) { app.pitch = 'E' + base; app.ballSlow = false; }
       else if (app.ballFast) { app.pitch = 'H' + base; app.ballFast = false; }
-      else if (app.mode === 'solo') { app.pitch = pitchTierPrefix(base) + base; } // permanent per-pitch-type upgrade tier - see PITCH_UPGRADE_COST
-      else { app.pitch = base; }
+      // Timing meter (requested): good/bad timing on THIS key's own press
+      // throws Hard/Easy, okay throws the plain base pitch - see
+      // pitchMeterZone()/stepPitchMeter(). Only active outside the tutorial
+      // (see stepPitchMeter()) - the tutorial's forced/scripted pitch always
+      // just falls through to the plain base pitch below.
+      else if (app.pitchMeterActive) {
+        const zone = pitchMeterZone(base.toLowerCase());
+        app.pitch = (zone === 'good' ? 'H' : zone === 'bad' ? 'E' : '') + base;
+      } else { app.pitch = base; }
     }
   }
 
@@ -4249,20 +4345,25 @@ function drawSoloSelect() {
 
 /* ============================== UPGRADES SCREEN (Solo mode only) ==============================
    Reached from the "Upgrades" button on drawSoloSelect()/drawMobileCharacterSelect().
-   6 purchasable rows: 4 pitch types (each 0-2, Easy/Normal/Hard) then Contact/
-   Power (each 1-5, level 1 free) - see pitchTierPrefix()/baseCrosshairRadius()/
-   baseCriticalRadius() for how these levels actually affect gameplay. */
+   10 purchasable rows: 4 pitch types x 2 tracks each (Zone/Speed, 0-2 - see
+   PITCH_ZONE_LEVELS/PITCH_SPEED_LEVELS for what each level actually buys
+   the pitch-timing meter) then Contact/Power (each 1-5, level 1 free) - see
+   baseCrosshairRadius()/baseCriticalRadius() for how those affect gameplay. */
 const UPGRADE_WATCH_AD_BUTTON = { x: 150, y: 10, w: 100, h: 32 };
 const UPGRADE_ROWS = [
-  { type: 'pitch', key: 'fastball', label: 'Fastball' },
-  { type: 'pitch', key: 'curveball', label: 'Curveball' },
-  { type: 'pitch', key: 'riser', label: 'Riser' },
-  { type: 'pitch', key: 'knuckleball', label: 'Knuckleball' },
+  { type: 'pitch', sub: 'zone', key: 'fastball', label: 'Fastball Zone' },
+  { type: 'pitch', sub: 'speed', key: 'fastball', label: 'Fastball Timing' },
+  { type: 'pitch', sub: 'zone', key: 'curveball', label: 'Curveball Zone' },
+  { type: 'pitch', sub: 'speed', key: 'curveball', label: 'Curveball Timing' },
+  { type: 'pitch', sub: 'zone', key: 'riser', label: 'Riser Zone' },
+  { type: 'pitch', sub: 'speed', key: 'riser', label: 'Riser Timing' },
+  { type: 'pitch', sub: 'zone', key: 'knuckleball', label: 'Knuckleball Zone' },
+  { type: 'pitch', sub: 'speed', key: 'knuckleball', label: 'Knuckleball Timing' },
   { type: 'batting', key: 'contact', label: 'Contact (bigger hit zone)' },
   { type: 'batting', key: 'power', label: 'Power (bigger critical zone)' },
 ];
 function upgradeRowLevel(row) {
-  return row.type === 'pitch' ? saveData.pitchUpgrades[row.key] : saveData.battingUpgrades[row.key];
+  return row.type === 'pitch' ? saveData.pitchUpgrades[row.key][row.sub] : saveData.battingUpgrades[row.key];
 }
 function upgradeRowMaxLevel(row) {
   return row.type === 'pitch' ? 2 : 5;
@@ -4277,7 +4378,7 @@ function upgradeRowCost(row) {
 }
 function upgradeRowStatusText(row) {
   const level = upgradeRowLevel(row);
-  if (row.type === 'pitch') return DIFFICULTY_NAMES[level];
+  if (row.type === 'pitch') return level + '/2';
   return level + '/5';
 }
 function buyUpgradeRow(index) {
@@ -4285,14 +4386,17 @@ function buyUpgradeRow(index) {
   const cost = upgradeRowCost(row);
   if (!cost || saveData.coins < cost) return false;
   saveData.coins -= cost;
-  if (row.type === 'pitch') saveData.pitchUpgrades[row.key]++;
+  if (row.type === 'pitch') saveData.pitchUpgrades[row.key][row.sub]++;
   else saveData.battingUpgrades[row.key]++;
   persistSaveData();
   return true;
 }
-const UPGRADE_ROW_START_Y = 100, UPGRADE_ROW_SPACING = 38;
+// Bug fix: 10 rows (up from the original 6, once each pitch type split into
+// its own Zone/Speed row) no longer fit the old 38-unit spacing starting at
+// y=100 - the last row landed at y=442, well past the 400-unit-tall canvas.
+const UPGRADE_ROW_START_Y = 82, UPGRADE_ROW_SPACING = 27;
 function upgradeRowButtonRect(index) {
-  return { x: 280, y: UPGRADE_ROW_START_Y + index * UPGRADE_ROW_SPACING, w: 100, h: 30 };
+  return { x: 280, y: UPGRADE_ROW_START_Y + index * UPGRADE_ROW_SPACING, w: 90, h: 22 };
 }
 function drawUpgradesScreen() {
   drawStadium();
@@ -4308,8 +4412,8 @@ function drawUpgradesScreen() {
   UPGRADE_ROWS.forEach((row, i) => {
     const y = UPGRADE_ROW_START_Y + i * UPGRADE_ROW_SPACING;
     const selected = app.upgradeCursorIndex === i;
-    text(row.label, toX(20), toY(y + 15), 15, selected ? 'gold' : 'white', 1, 'left', selected ? 900 : 400);
-    text(upgradeRowStatusText(row), toX(230), toY(y + 15), 14, '#ccc', 1, 'left');
+    text(row.label, toX(20), toY(y + 13), 13, selected ? 'gold' : 'white', 1, 'left', selected ? 900 : 400);
+    text(upgradeRowStatusText(row), toX(230), toY(y + 13), 12, '#ccc', 1, 'left');
     const btn = upgradeRowButtonRect(i);
     const cost = upgradeRowCost(row);
     if (cost === null) {
@@ -4318,11 +4422,11 @@ function drawUpgradesScreen() {
       drawUnitButton(btn, 'Upgrade (' + cost + ')', saveData.coins >= cost);
     }
     if (selected) {
-      text('▶', toX(8), toY(y + 15), 16, 'gold', 1, 'center', 900);
+      text('▶', toX(8), toY(y + 13), 14, 'gold', 1, 'center', 900);
     }
   });
 
-  text('Up / Down · Enter To Buy', CANVAS_W / 2, toY(360), 16, 'white', 0.85, 'center', 700);
+  text('Up / Down · Enter To Buy', CANVAS_W / 2, toY(363), 15, 'white', 0.85, 'center', 700);
 }
 function handleUpgradesKey(key) {
   if (key === 'escape') { app.screen = 'characterSolo'; return; }
@@ -4354,8 +4458,8 @@ function drawMobileUpgradesScreen() {
 
   UPGRADE_ROWS.forEach((row, i) => {
     const y = UPGRADE_ROW_START_Y + i * UPGRADE_ROW_SPACING;
-    text(row.label, toX(20), toY(y + 15), 14, 'white', 1, 'left');
-    text(upgradeRowStatusText(row), toX(230), toY(y + 15), 13, '#ccc', 1, 'left');
+    text(row.label, toX(20), toY(y + 13), 12, 'white', 1, 'left');
+    text(upgradeRowStatusText(row), toX(230), toY(y + 13), 11, '#ccc', 1, 'left');
     const btn = upgradeRowButtonRect(i);
     const cost = upgradeRowCost(row);
     if (cost === null) drawUnitButton(btn, 'MAX', false);
@@ -4466,6 +4570,29 @@ function pointInPitchMenuRow(index, x, y) {
   const boxX = toX(10), boxY = toY(310 + index * 20);
   return x >= boxX && x <= boxX + lenX(PITCH_MENU_ROW_W) && y >= boxY && y <= boxY + boxSize;
 }
+// Draws one pitch type's timing meter: a bad|okay|good|okay|bad bar (widths
+// from that type's own Zone upgrade level, see PITCH_ZONE_LEVELS) with a
+// marker at its current sweep position (see stepPitchMeter()). x/y/w/h are
+// already-scaled absolute canvas coordinates, same convention as rect().
+const PITCH_METER_ZONE_COLORS = { bad: '#ff4d4d', okay: '#ffe14d', good: '#4dff4d' };
+function drawPitchMeterBar(type, x, y, w, h) {
+  const { good, bad } = PITCH_ZONE_LEVELS[pitchZoneLevel(type)];
+  const goodStart = 0.5 - good, goodEnd = 0.5 + good;
+  [
+    { from: 0, to: bad, color: PITCH_METER_ZONE_COLORS.bad },
+    { from: bad, to: goodStart, color: PITCH_METER_ZONE_COLORS.okay },
+    { from: goodStart, to: goodEnd, color: PITCH_METER_ZONE_COLORS.good },
+    { from: goodEnd, to: 1 - bad, color: PITCH_METER_ZONE_COLORS.okay },
+    { from: 1 - bad, to: 1, color: PITCH_METER_ZONE_COLORS.bad },
+  ].forEach(seg => {
+    if (seg.to <= seg.from) return;
+    rect(x + w * seg.from, y, w * (seg.to - seg.from), h, seg.color, 0.85);
+  });
+  rect(x, y, w, h, null, 1, 'white', 1);
+  const markerX = x + w * app.pitchMeter[type].pos;
+  rect(markerX - toLen(1), y - toLen(2), toLen(2), h + toLen(4), 'white');
+}
+
 function drawPitchMenu() {
   // Solo mode has the human as exactly one of pitcher/batter at a time (the
   // other is CPU) - the WASD/arrow pitch-key legend is only relevant while
@@ -4478,12 +4605,18 @@ function drawPitchMenu() {
     ? [['W', 'Fastball'], ['A', 'Knuckleball'], ['S', 'Curveball'], ['D', 'Riser']]
     : [['↑', 'Fastball'], ['←', 'Knuckleball'], ['↓', 'Curveball'], ['→', 'Riser']];
   const boxSize = toLen(20); // uniform (not lenX) so the key square stays square, not stretched
+  const pitchTypeByRow = ['fastball', 'knuckleball', 'curveball', 'riser']; // same order as entries/PITCH_BUTTONS
   entries.forEach(([label, name], i) => {
     const y = 310 + i * 20;
     const boxX = toX(10), boxY = toY(y);
     rect(boxX, boxY, boxSize, boxSize, 'black', 0.6);
     text(label, boxX + boxSize / 2, boxY + boxSize / 2, 14, 'white', 1, 'center', 700);
     text(name, boxX + boxSize + lenX(8), boxY + boxSize / 2, 15, 'white', 1, 'left');
+    // Timing meter (requested): only meaningful while a human could actually
+    // throw right now - see stepPitchMeter().
+    if (app.pitchMeterActive) {
+      drawPitchMeterBar(pitchTypeByRow[i], toX(210), boxY + boxSize / 2 - toLen(6), lenX(90), toLen(12));
+    }
   });
 }
 
@@ -4610,6 +4743,12 @@ function drawPitchButtons() {
     rect(bx, by, bw, bh, 'rgba(0,0,0,0.6)', 1, 'white', 2);
     text(p.label, bx + bw / 2, by + toLen(14), 12, 'white', 1, 'center', 700);
     drawPitchPathIcon(bx + toLen(8), by + toLen(24), bw - toLen(16), toLen(28), p.type);
+    // Timing meter (requested): only meaningful while a human could actually
+    // throw right now - see stepPitchMeter(). Sits in the button's own
+    // bottom strip, under the trajectory icon.
+    if (app.pitchMeterActive) {
+      drawPitchMeterBar(p.type, bx + toLen(6), by + bh - toLen(9), bw - toLen(12), toLen(6));
+    }
   });
 }
 
@@ -5832,6 +5971,8 @@ function update() {
   // Pause's drag animation freezes everything else while it plays out -
   // only advance the animation itself and skip the rest of this tick.
   if (app.pauseAnimActive) { stepPauseAnim(); return; }
+
+  stepPitchMeter();
 
   // Bug fix: this used to be nested inside `if (app.isPitching)`, so Future
   // Sight's spot-tracking (and its windup-freeze preview window) only ever
