@@ -1814,12 +1814,13 @@ function recordOut() {
   app.showFutureSight = false;
 
   // Tutorial's first inning (requested): any single out - the guided
-  // strikeout above, or a real one during the batting free-play stretch
-  // (see stepTutorial()'s 'awaiting_pitch_turn' check) - ends that half
-  // immediately instead of needing all 3, the same shortcut on both sides
-  // of the inning for consistency. bat_easy can't actually reach here at
-  // all (every miss wipes outFills back to dimgray - see resetBall()), so
-  // this only ever fires for the two cases above.
+  // strikeout above, a real one during the batting free-play stretch (see
+  // stepTutorial()'s 'awaiting_pitch_turn' check), or a real strikeout/
+  // ground-out reached during bat_power_demo (the player swings for real
+  // there too, just without awaitingContact gating it - see
+  // beginPowerUpDemo()) - ends that half immediately instead of needing all
+  // 3, the same shortcut throughout. bat_easy can't actually reach here at
+  // all (every miss wipes outFills back to dimgray - see resetBall()).
   if (app.tutorial.active) {
     outFills[0] = 'gold';
     bases[0] = bases[1] = bases[2] = 'grey';
@@ -1827,6 +1828,13 @@ function recordOut() {
     clearCounts(true);
     app.batPowerFull = true; app.pitchPowerFull = true;
     clearPowerupVisuals();
+    // Bug fix (requested): an out reached while bat_power_demo's "Press M to
+    // use your power-up!" caption was still up (struck/grounded out before
+    // ever pressing M) left that caption - and practiceStep itself - stuck,
+    // since this branch used to switchSides() straight away without ever
+    // running the same transition a successful M-press triggers. Same fix
+    // pressing M would have applied, just triggered by the out instead.
+    if (app.tutorial.practiceStep === 'bat_power_demo') awaitPitchingTurn();
     switchSides();
     return;
   }
