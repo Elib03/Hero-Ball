@@ -2778,13 +2778,6 @@ function handleSoloSelectKey(key) {
     buyPlayerCharacter(CHARACTERS[app.player1Index].key);
   } else if (key === 'u') {
     app.screen = 'upgrades';
-  } else if (key === 't') {
-    // TEMPORARY DEBUG (requested): instantly grants a tournament trophy to
-    // whichever character is currently browsed/locked in the Player slot, so
-    // the portrait-card badge and reveal can be tested without grinding a
-    // full bracket. Remove on request.
-    saveData.tournamentTrophies[CHARACTERS[app.player1Index].key] = true;
-    persistSaveData();
   }
 }
 
