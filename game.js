@@ -1113,6 +1113,12 @@ const app = {
   // half-inning at bat, same per-half-inning reset point as the field above.
   // Read by cpuPitch() to temporarily bump its pitch tier.
   runsThisHalfInning: 0,
+  // Baby mode graduation (requested): unlike runsThisHalfInning above, this
+  // is cumulative across the WHOLE game, never reset between half-innings -
+  // baby mode ends once the human has scored 5 runs total, however many
+  // half-innings that takes, not 5 in any single one. Only reset once per
+  // match (resetMatchState()) - see scoreRun().
+  totalRunsThisGame: 0,
   newlyUnlocked: [], // [{type:'player'|'cpu', key, name}] populated by evaluateGameEndUnlocks(), shown by the unlockReveal screen
   cpuLocked: false, // mirrors player1Locked, but for the CPU character card on the solo/mobileCpuSelect screens
   lastCoinsEarned: 0, // set by evaluateGameEndUnlocks(), shown on drawGameOver()
@@ -1651,21 +1657,18 @@ function scoreRun() {
     // its own comment.
     if (!battingTeamIsHome()) {
       app.runsThisHalfInning++;
-      // Rally difficulty applies to baby mode too (requested): scoring 5
-      // runs in a half-inning while still in baby mode graduates it into a
-      // normal Easy-tier game, permanently (even for a later inning) -
-      // "and so on like normal" from there means the existing rally-
-      // difficulty step above should then apply exactly as it always does
-      // for a non-baby-mode game: another 5 runs bumps to Normal, another 5
-      // to Hard, capped. Subtracting the 5 runs "spent" graduating resets
-      // this half-inning's own counter to 0 so that formula sees a fresh
-      // Easy-tier start instead of counting them a second time (which would
-      // jump straight to Normal instead of landing on Easy first).
-      if (!saveData.babyModeDone && app.runsThisHalfInning >= 5) {
+      // Baby mode graduation (requested): unlike rally difficulty above,
+      // this is 5 runs TOTAL across the whole game, not 5 in any single
+      // half-inning - see totalRunsThisGame's own comment. A separate
+      // counter, so unlike the old combined version of this check, nothing
+      // needs subtracting from runsThisHalfInning here - that counter just
+      // keeps counting independently for rally difficulty's own purpose,
+      // completely unaffected by when (or whether) graduation happens.
+      app.totalRunsThisGame++;
+      if (!saveData.babyModeDone && app.totalRunsThisGame >= 5) {
         saveData.babyModeDone = true;
         persistSaveData();
         app.difficultyIndex = 0; // Easy - the CPU is always Antman (rank 0) during a baby-mode-eligible first game anyway, but make it explicit
-        app.runsThisHalfInning -= 5;
       }
     }
   }
@@ -2624,6 +2627,7 @@ function resetMatchState() {
   app.lastPitchThrown = '';
   app.pitchTypesHitThisInning = { fastball: false, curveball: false, riser: false, knuckleball: false };
   app.runsThisHalfInning = 0;
+  app.totalRunsThisGame = 0;
   app.newlyUnlocked = [];
 }
 
