@@ -1645,26 +1645,27 @@ function scoreRun() {
   // after trailing by 3+" unlock condition (evaluateGameEndUnlocks()).
   if (app.mode === 'solo') {
     app.maxDeficitThisGame = Math.max(app.maxDeficitThisGame, homeScore - awayScore);
-    // Rally difficulty (requested): every 7 runs the human scores in a
-    // single half-inning at bat, cpuPitch() bumps its pitch tier up by one
-    // (capped at Hard) for the rest of that half - see its own comment.
+    // Rally difficulty (requested, threshold lowered to 5): every 5 runs the
+    // human scores in a single half-inning at bat, cpuPitch() bumps its
+    // pitch tier up by one (capped at Hard) for the rest of that half - see
+    // its own comment.
     if (!battingTeamIsHome()) {
       app.runsThisHalfInning++;
-      // Rally difficulty applies to baby mode too (requested): scoring 7
+      // Rally difficulty applies to baby mode too (requested): scoring 5
       // runs in a half-inning while still in baby mode graduates it into a
       // normal Easy-tier game, permanently (even for a later inning) -
       // "and so on like normal" from there means the existing rally-
       // difficulty step above should then apply exactly as it always does
-      // for a non-baby-mode game: another 7 runs bumps to Normal, another 7
-      // to Hard, capped. Subtracting the 7 runs "spent" graduating resets
+      // for a non-baby-mode game: another 5 runs bumps to Normal, another 5
+      // to Hard, capped. Subtracting the 5 runs "spent" graduating resets
       // this half-inning's own counter to 0 so that formula sees a fresh
       // Easy-tier start instead of counting them a second time (which would
       // jump straight to Normal instead of landing on Easy first).
-      if (!saveData.babyModeDone && app.runsThisHalfInning >= 7) {
+      if (!saveData.babyModeDone && app.runsThisHalfInning >= 5) {
         saveData.babyModeDone = true;
         persistSaveData();
         app.difficultyIndex = 0; // Easy - the CPU is always Antman (rank 0) during a baby-mode-eligible first game anyway, but make it explicit
-        app.runsThisHalfInning -= 7;
+        app.runsThisHalfInning -= 5;
       }
     }
   }
@@ -2354,11 +2355,12 @@ function cpuPitch() {
     ['Fastball', 'Curveball', 'Knuckleball', 'Riser'],
     ['HFastball', 'HCurveball', 'HKnuckleball', 'HRiser'],
   ];
-  // Rally difficulty (requested): every 7 runs the human scores in this
-  // half-inning bumps the CPU's pitch tier up by one, capped at Hard (index
-  // 2) - "if the difficulty can't increase it stays the same." Only reads
-  // app.runsThisHalfInning in solo (it's always 0 in versus, a no-op there).
-  const boost = app.mode === 'solo' ? Math.floor(app.runsThisHalfInning / 7) : 0;
+  // Rally difficulty (requested, threshold lowered to 5): every 5 runs the
+  // human scores in this half-inning bumps the CPU's pitch tier up by one,
+  // capped at Hard (index 2) - "if the difficulty can't increase it stays
+  // the same." Only reads app.runsThisHalfInning in solo (it's always 0 in
+  // versus, a no-op there).
+  const boost = app.mode === 'solo' ? Math.floor(app.runsThisHalfInning / 5) : 0;
   const options = sets[Math.min(2, app.difficultyIndex + boost)];
   app.pitch = options[randRange(0, options.length)];
   app.isPitching = true;
