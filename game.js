@@ -213,7 +213,6 @@ function characterDifficultyIndex(key) {
    after playtesting. */
 const WIN_BASE_COINS = 50;
 const WIN_COINS_PER_RUN = 5; // solo win reward = WIN_BASE_COINS + (human's own score) * this
-const AD_REWARD_COINS = 40; // flat reward per fully-watched rewarded ad
 
 // Cost of each of the 4 purchasable steps (level 1 is free) for both
 // Pitching Power and Pitching Accuracy - same 1-5/4-step shape as
@@ -887,30 +886,6 @@ function pokiCommercialBreak(onDone) {
     if (musicStarted) musicSound.play().catch(() => {});
     onDone();
   });
-}
-
-// Same pattern as pokiCommercialBreak() above, but for the "watch an ad for
-// Coins" button on the Upgrades screen - a REWARDED ad, which resolves to
-// whether the player actually watched it to completion (onResult(false) if
-// they skipped early, in which case no reward should be granted). Falls back
-// to an instant "success" when the SDK (or its rewardedBreak call) isn't
-// available at all, e.g. local dev via `python -m http.server`, so testing
-// off-Poki still works.
-function pokiRewardedAd(onResult) {
-  if (!pokiSdkAvailable || typeof PokiSDK.rewardedBreak !== 'function') { onResult(true); return; }
-  pokiBreakPending = true;
-  PokiSDK.rewardedBreak(() => {
-    musicSound.pause();
-    crowdSound.pause();
-  }).then(success => {
-    pokiBreakPending = false;
-    if (musicStarted) musicSound.play().catch(() => {});
-    onResult(success);
-  });
-}
-function handleWatchAd() {
-  if (pokiBreakPending) return;
-  pokiRewardedAd(success => { if (success) { saveData.coins += AD_REWARD_COINS; persistSaveData(); } });
 }
 
 // Safety net: every in-game path that ends a match (game over, quitting,
@@ -4301,31 +4276,55 @@ function drawLockIcon(cx, cy, size) {
   circle(cx, bodyTop + bodyH * 0.42, size * 0.07, 'rgba(255,255,255,0.9)', 1);
 }
 
-// Same hand-drawn vector-icon style as drawLockIcon() above - a permanent
-// tournament-championship badge (requested), no external asset needed.
+// A permanent tournament-championship badge (requested: swapped from a
+// hand-drawn vector icon to an external image asset - see assets/icons/trophy.png).
+const trophyImg = loadImage(ICONS + 'trophy.png');
 function drawTrophyIcon(cx, cy, size) {
-  const cupW = size * 0.62, cupH = size * 0.5, cupTop = cy - size * 0.32;
-  ctx.save();
-  ctx.fillStyle = 'gold';
-  ctx.strokeStyle = 'rgba(120,90,0,0.9)';
-  ctx.lineWidth = size * 0.05;
-  ctx.beginPath();
-  ctx.moveTo(cx - cupW / 2, cupTop);
-  ctx.lineTo(cx + cupW / 2, cupTop);
-  ctx.lineTo(cx + cupW * 0.28, cupTop + cupH);
-  ctx.lineTo(cx - cupW * 0.28, cupTop + cupH);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(cx - cupW / 2 - size * 0.08, cupTop + cupH * 0.28, size * 0.16, Math.PI * 0.3, Math.PI * 1.55);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(cx + cupW / 2 + size * 0.08, cupTop + cupH * 0.28, size * 0.16, Math.PI * 1.45, Math.PI * 2.7);
-  ctx.stroke();
-  ctx.restore();
-  rect(cx - size * 0.06, cupTop + cupH, size * 0.12, size * 0.16, 'gold', 1);
-  rect(cx - size * 0.22, cupTop + cupH + size * 0.16, size * 0.44, size * 0.08, 'gold', 1);
+  if (!trophyImg.complete || !trophyImg.naturalWidth) return;
+  const scale = size / Math.max(trophyImg.naturalWidth, trophyImg.naturalHeight);
+  const iw = trophyImg.naturalWidth * scale, ih = trophyImg.naturalHeight * scale;
+  ctx.drawImage(trophyImg, cx - iw / 2, cy - ih / 2, iw, ih);
+}
+
+// Coin icon (requested: replaces the word "coins"/"Coins:" everywhere a
+// currency amount is shown, with the number immediately followed by this
+// image - see assets/icons/coin.png).
+const coinIcon = loadImage(ICONS + 'coin.png');
+function drawCoinIcon(cx, cy, size) {
+  if (!coinIcon.complete || !coinIcon.naturalWidth) return;
+  const scale = size / Math.max(coinIcon.naturalWidth, coinIcon.naturalHeight);
+  const iw = coinIcon.naturalWidth * scale, ih = coinIcon.naturalHeight * scale;
+  ctx.drawImage(coinIcon, cx - iw / 2, cy - ih / 2, iw, ih);
+}
+// Draws [prefix][amount][coin icon] as one group, positioned by `align`
+// relative to (x,y) the same way text() itself is (default 'center') -
+// prefix is optional plain text (e.g. "Upgrade ", "Buy: ") drawn before the
+// number in the same style. Used everywhere a coin amount is shown instead
+// of spelling out the word "coins".
+function drawCoinAmount(x, y, amount, size, color, align, weight, prefix) {
+  align = align || 'center';
+  prefix = prefix || '';
+  const numStr = String(amount);
+  const prefixW = prefix ? textWidth(prefix, size, weight) : 0;
+  const numW = textWidth(numStr, size, weight);
+  const iconSize = toLen(size) * 1.15;
+  const gap = toLen(size) * 0.2;
+  const totalW = prefixW + numW + gap + iconSize;
+  let left;
+  if (align === 'left') left = x;
+  else if (align === 'right') left = x - totalW;
+  else left = x - totalW / 2;
+  if (prefix) text(prefix, left, y, size, color, 1, 'left', weight);
+  text(numStr, left + prefixW, y, size, color, 1, 'left', weight);
+  drawCoinIcon(left + prefixW + numW + gap + iconSize / 2, y, iconSize);
+}
+// Same button chrome as drawUnitButton(), but the label is a coin amount
+// (with an optional plain-text prefix like "Upgrade "/"Buy ") instead of a
+// plain string - see drawCoinAmount().
+function drawCoinButton(btn, prefix, cost, enabled) {
+  const bx = toX(btn.x), by = toY(btn.y), bw = lenX(btn.w), bh = toLen(btn.h);
+  rect(bx, by, bw, bh, enabled === false ? 'rgba(60,60,60,0.6)' : 'rgba(0,0,0,0.5)', 1, enabled === false ? '#777' : 'white', 2);
+  drawCoinAmount(bx + bw / 2, by + bh / 2, cost, 15, enabled === false ? '#999' : 'white', 'center', 700, prefix);
 }
 
 // contentLocked/conditionText: the "not yet unlocked" state (Solo mode's
@@ -4366,7 +4365,7 @@ function drawPortraitCard(cx, cy, w, h, charObj, locked, borderColor, contentLoc
     const buyY = cy + h / 2 - 14;
     if (buyCost) {
       const affordable = saveData.coins >= buyCost;
-      text('Buy: ' + buyCost + ' coins', cx, buyY, 11, affordable ? '#7CFC00' : '#999', 1, 'center', 700);
+      drawCoinAmount(cx, buyY, buyCost, 11, affordable ? '#7CFC00' : '#999', 'center', 700, 'Buy: ');
     }
     if (conditionText) {
       const lines = computeWrappedLines(conditionText, w - 20, 11, 700);
@@ -4422,11 +4421,11 @@ function drawMobileCharacterSelect() {
     locked, playerUnlockConditionText(char.key), cost);
 
   drawBackButton();
-  text('Coins: ' + saveData.coins, toX(390), toY(20), 16, 'gold', 1, 'right', 700);
+  drawCoinAmount(toX(390), toY(20), saveData.coins, 16, 'gold', 'right', 700);
   drawMobileNavButtons();
   drawUnitButton(MOBILE_UPGRADES_BUTTON, 'Upgrades');
   if (locked && cost) {
-    drawUnitButton(MOBILE_BUY_BUTTON, 'Buy (' + cost + ')', saveData.coins >= cost);
+    drawCoinButton(MOBILE_BUY_BUTTON, 'Buy ', cost, saveData.coins >= cost);
   } else {
     drawMobileConfirmButton('Confirm');
   }
@@ -4526,7 +4525,7 @@ function drawSoloSelect() {
     isTournament ? false : !isCpuUnlocked(cpu.key), isTournament ? null : cpuUnlockConditionText(cpu.key), null, false);
 
   drawBackButton();
-  text('Coins: ' + saveData.coins, CANVAS_W / 2, toY(UPGRADES_BUTTON.y - 12), 15, 'gold', 1, 'center', 700);
+  drawCoinAmount(CANVAS_W / 2, toY(UPGRADES_BUTTON.y - 12), saveData.coins, 15, 'gold', 'center', 700);
   drawUnitButton(UPGRADES_BUTTON, 'Upgrades');
 
   if (app.player1Locked && app.cpuLocked) {
@@ -4542,7 +4541,6 @@ function drawSoloSelect() {
    pitch types - see PITCH_ZONE_LEVELS/PITCH_SPEED_LEVELS for what each level
    actually buys the pitch-timing meter) then Contact/Power - see
    baseCrosshairRadius()/baseCriticalRadius() for how those affect gameplay. */
-const UPGRADE_WATCH_AD_BUTTON = { x: 150, y: 10, w: 100, h: 32 };
 const UPGRADE_ROWS = [
   { type: 'pitchPower', label: 'Pitching Power (bigger zone)' },
   { type: 'pitchAccuracy', label: 'Pitching Accuracy (slower timing)' },
@@ -4589,9 +4587,8 @@ function drawUpgradesScreen() {
   rect(0, 0, CANVAS_W, CANVAS_H, null, 1, 'black', 2);
 
   text('Upgrades', CANVAS_W / 2, toY(68), 26, 'white', 1, 'center', 900);
-  text('Coins: ' + saveData.coins, toX(390), toY(20), 18, 'gold', 1, 'right', 700);
+  drawCoinAmount(toX(390), toY(20), saveData.coins, 18, 'gold', 'right', 700);
   drawBackButton();
-  drawUnitButton(UPGRADE_WATCH_AD_BUTTON, 'Watch Ad (+' + AD_REWARD_COINS + ')');
 
   UPGRADE_ROWS.forEach((row, i) => {
     const y = UPGRADE_ROW_START_Y + i * UPGRADE_ROW_SPACING;
@@ -4603,7 +4600,7 @@ function drawUpgradesScreen() {
     if (cost === null) {
       drawUnitButton(btn, 'MAX', false);
     } else {
-      drawUnitButton(btn, 'Upgrade (' + cost + ')', saveData.coins >= cost);
+      drawCoinButton(btn, 'Upgrade ', cost, saveData.coins >= cost);
     }
     if (selected) {
       text('▶', toX(8), toY(y + 15), 16, 'gold', 1, 'center', 900);
@@ -4620,7 +4617,6 @@ function handleUpgradesKey(key) {
 }
 function handleUpgradesClick(x, y) {
   if (pointInBackButton(x, y)) { app.screen = 'characterSolo'; return; }
-  if (pointInUnitRect(x, y, UPGRADE_WATCH_AD_BUTTON)) { handleWatchAd(); return; }
   for (let i = 0; i < UPGRADE_ROWS.length; i++) {
     if (pointInUnitRect(x, y, upgradeRowButtonRect(i))) { app.upgradeCursorIndex = i; buyUpgradeRow(i); return; }
   }
@@ -4636,9 +4632,8 @@ function drawMobileUpgradesScreen() {
   rect(0, 0, CANVAS_W, CANVAS_H, null, 1, 'black', 2);
 
   text('Upgrades', CANVAS_W / 2, toY(68), 24, 'white', 1, 'center', 900);
-  text('Coins: ' + saveData.coins, toX(390), toY(20), 16, 'gold', 1, 'right', 700);
+  drawCoinAmount(toX(390), toY(20), saveData.coins, 16, 'gold', 'right', 700);
   drawBackButton();
-  drawUnitButton(UPGRADE_WATCH_AD_BUTTON, 'Watch Ad (+' + AD_REWARD_COINS + ')');
 
   UPGRADE_ROWS.forEach((row, i) => {
     const y = UPGRADE_ROW_START_Y + i * UPGRADE_ROW_SPACING;
@@ -4647,12 +4642,11 @@ function drawMobileUpgradesScreen() {
     const btn = upgradeRowButtonRect(i);
     const cost = upgradeRowCost(row);
     if (cost === null) drawUnitButton(btn, 'MAX', false);
-    else drawUnitButton(btn, 'Buy (' + cost + ')', saveData.coins >= cost);
+    else drawCoinButton(btn, 'Buy ', cost, saveData.coins >= cost);
   });
 }
 function handleMobileUpgradesTap(x, y) {
   if (pointInBackButton(x, y)) { app.screen = 'mobileCharacterSelect'; return; }
-  if (pointInUnitRect(x, y, UPGRADE_WATCH_AD_BUTTON)) { handleWatchAd(); return; }
   for (let i = 0; i < UPGRADE_ROWS.length; i++) {
     if (pointInUnitRect(x, y, upgradeRowButtonRect(i))) { buyUpgradeRow(i); return; }
   }
